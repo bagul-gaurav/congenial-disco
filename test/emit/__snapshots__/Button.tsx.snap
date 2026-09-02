@@ -1,0 +1,129 @@
+import * as React from "react"
+import { addPropertyControls, ControlType } from "framer"
+import { motion } from "framer-motion"
+
+interface Props {
+    label?: string
+    tone?: string
+    disabled?: boolean
+    onTap?: () => void
+    style?: React.CSSProperties
+}
+
+/**
+ * A button with tone and disabled states.
+ *
+ * @framerSupportedLayoutWidth auto
+ * @framerSupportedLayoutHeight auto
+ */
+export default function PrimaryButton(props: Props) {
+    const { label = "Click me", tone = "primary", disabled = false, onTap, style } = props
+
+    const rootStyle: React.CSSProperties = {
+        width: "fit-content",
+        height: "fit-content",
+        padding: "10px 18px 10px 18px",
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        backgroundColor: "#3b5bfd",
+        borderRadius: 8,
+    }
+    const rootGhost: React.CSSProperties = {
+        backgroundColor: "#ffffff",
+        border: "1px solid #3b5bfd",
+    }
+    const rootDisabled: React.CSSProperties = {
+        opacity: 0.4,
+    }
+    const rootMotion = {
+        rest: {
+            backgroundColor: "#3b5bfd",
+            scale: 1,
+        },
+        hover: {
+            backgroundColor: "#2f4ad0",
+        },
+        pressed: {
+            scale: 0.97,
+        },
+    }
+    const labelStyle: React.CSSProperties = {
+        width: "fit-content",
+        flexShrink: 0,
+        height: "fit-content",
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: 15,
+        fontWeight: 600,
+        lineHeight: 1.2,
+        textAlign: "center",
+        color: "#ffffff",
+        whiteSpace: "pre-wrap",
+        margin: 0,
+        display: "block",
+    }
+    const labelGhost: React.CSSProperties = {
+        color: "#3b5bfd",
+    }
+    const arrowStyle: React.CSSProperties = {
+        width: 12,
+        height: "fit-content",
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: 16,
+        fontWeight: 400,
+        lineHeight: 1.4,
+        textAlign: "left",
+        color: "#111111",
+        whiteSpace: "pre-wrap",
+        margin: 0,
+        display: "none",
+    }
+    const arrowMotion = {
+        rest: {
+            display: "none",
+        },
+        hover: {
+            display: "block",
+        },
+    }
+
+    return (
+        <motion.div
+            style={{
+                ...rootStyle,
+                ...(tone === "ghost" ? rootGhost : null),
+                ...(disabled ? rootDisabled : null),
+                ...style,
+            }}
+            variants={rootMotion}
+            initial="rest"
+            whileHover={disabled ? undefined : "hover"}
+            whileTap={disabled ? undefined : "pressed"}
+            onTap={disabled ? undefined : onTap}
+        >
+            <p
+                style={{
+                    ...labelStyle,
+                    ...(tone === "ghost" ? labelGhost : null),
+                }}
+            >
+                {label}
+            </p>
+            <motion.p
+                style={arrowStyle}
+                variants={arrowMotion}
+            >
+                →
+            </motion.p>
+        </motion.div>
+    )
+}
+
+addPropertyControls(PrimaryButton, {
+    label: { type: ControlType.String, description: "The button's caption.", title: "Label", defaultValue: "Click me" },
+    tone: { type: ControlType.Enum, title: "Tone", defaultValue: "primary", options: ["primary","ghost"], optionTitles: ["Primary","Ghost"] },
+    disabled: { type: ControlType.Boolean, title: "Disabled", defaultValue: false },
+    onTap: { type: ControlType.EventHandler, title: "On Tap" },
+})
