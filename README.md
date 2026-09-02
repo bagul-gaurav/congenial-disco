@@ -211,11 +211,20 @@ Three details in there are load-bearing:
 ## Testing
 
 ```bash
-npm test          # unit, golden-file, compile and runtime passes — no services needed
+npm run setup      # one-time: installs deps, starts Postgres, creates and
+                    # migrates the dev + E2E databases. Pass --build to also
+                    # `npm run build`, which npm run test:e2e needs.
+npm test           # unit, golden-file, compile and runtime passes — no services needed
 npm run typecheck
 npm run lint
-npm run test:e2e  # browser tests; needs Postgres (E2E_DATABASE_URL or DATABASE_URL)
+npm run test:e2e   # browser tests; needs Postgres (E2E_DATABASE_URL or DATABASE_URL)
 ```
+
+`scripts/setup-dev.sh` assumes a Debian/Ubuntu image with the `postgresql`
+apt package already installed (as in this project's containers) and
+passwordless sudo for the `postgres` service user; it's safe to re-run. It
+prints the `DATABASE_URL`/`E2E_DATABASE_URL` values to export before running
+`npm run test:e2e`.
 
 All four run in CI (`.github/workflows/ci.yml`) on every push: the three that
 need nothing but Node in one job, the browser tests against a Postgres service
@@ -247,6 +256,20 @@ Five layers, in increasing order of what they prove:
 
 If a Chromium is already installed (as in most CI images), point Playwright at
 it with `CHROMIUM_PATH` rather than downloading another.
+
+### Staging against Supabase
+
+`.github/workflows/supabase-staging.yml` runs the full suite — migrate, unit
+tests, browser tests — against a real Supabase Postgres project instead of the
+disposable Docker Postgres `ci.yml` uses. It does not run on every push: one
+shared, persistent database makes concurrent runs unsafe, so it's triggered by
+hand (Actions tab → "Supabase staging" → Run workflow) plus a weekly canary.
+
+Needs a repo secret `SUPABASE_DATABASE_URL` — the connection string from the
+Supabase project's Settings → Database → Connection string → URI — under
+Settings → Secrets and variables → Actions. The e2e global setup reseeds the
+demo component by name before each run, so it's safe to point at a database
+that already has data in it.
 
 ## Not built yet
 
