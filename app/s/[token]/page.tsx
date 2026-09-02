@@ -1,8 +1,7 @@
 import { notFound } from "next/navigation"
 import type { Metadata } from "next"
 
-import { validate } from "@/model/ops"
-import type { ComponentDoc } from "@/model/types"
+import { readDoc } from "@/server/components"
 import { prisma } from "@/server/db"
 
 import { SharedComponent } from "./SharedComponent"
@@ -42,8 +41,10 @@ export default async function SharePage({ params }: Params) {
   // guess cannot distinguish "wrong" from "no longer shared".
   if (!component) notFound()
 
-  const doc = component.doc as unknown as ComponentDoc
-  if (validate(doc).length > 0) notFound()
+  // Through the same version ladder as the editor: a shared component may not
+  // have been opened since a shape change.
+  const doc = readDoc(component.doc)
+  if (!doc) notFound()
 
   return (
     <SharedComponent doc={doc} updatedAt={component.updatedAt.toISOString()} />

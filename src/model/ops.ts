@@ -16,7 +16,6 @@ import {
   isBinding,
   isTokenRef,
   type Bindable,
-  type Binding,
   type ComponentDoc,
   type FrameNode,
   type Node,

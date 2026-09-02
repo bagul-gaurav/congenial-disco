@@ -50,6 +50,19 @@ export interface EditorState {
   editingTextId: NodeId | null
   /** Set when the document differs from what was last persisted. */
   dirty: boolean
+  /**
+   * The revision the server held when this document was last read or written.
+   * Sent back on every save so a write that would clobber someone else's is
+   * refused rather than silently winning.
+   */
+  revision: number
+  /**
+   * Set when the server refused a save because the stored document moved on —
+   * another tab, or another person once there is more than one. Saving stops
+   * until the document is reloaded, because the alternative is overwriting
+   * work with a document that never saw it.
+   */
+  conflicted: boolean
 
   // -- document --------------------------------------------------------------
   /** Apply a document operation, pushing the previous document onto the undo stack. */
@@ -60,8 +73,17 @@ export interface EditorState {
    * editing while a variant is selected does not silently rewrite the base.
    */
   edit: (nodeId: NodeId, override: NodeOverride) => void
-  replaceDoc: (doc: ComponentDoc, options?: { resetHistory?: boolean }) => void
-  markClean: () => void
+  replaceDoc: (doc: ComponentDoc, options?: { resetHistory?: boolean; revision?: number }) => void
+  /**
+   * Records a successful save.
+   *
+   * Clears `dirty` only when the document that was saved is still the one on
+   * screen: an edit made while the request was in flight is *not* on the
+   * server, and clearing the flag for it drops that edit until the next
+   * unrelated change happens to trigger another save.
+   */
+  markSaved: (saved: ComponentDoc, revision: number) => void
+  markConflicted: () => void
 
   undo: () => void
   redo: () => void
@@ -93,6 +115,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   viewport: { x: 0, y: 0, zoom: 1 },
   editingTextId: null,
   dirty: false,
+  revision: 0,
+  conflicted: false,
 
   apply: (fn) =>
     set((state) => {
@@ -137,9 +161,17 @@ export const useEditor = create<EditorState>((set, get) => ({
         ? state.activeVariantId
         : null,
       dirty: false,
+      revision: options?.revision ?? state.revision,
+      conflicted: false,
     })),
 
-  markClean: () => set({ dirty: false }),
+  markSaved: (saved, revision) =>
+    set((state) => ({
+      revision,
+      dirty: state.doc === saved ? false : state.dirty,
+    })),
+
+  markConflicted: () => set({ conflicted: true }),
 
   undo: () =>
     set((state) => {

@@ -11,11 +11,11 @@
 
 import * as React from "react"
 
+import { saveDoc } from "@/editor/save"
 import { useEditor } from "@/editor/store"
 import type { ComponentDoc } from "@/model/types"
 
 import { Button } from "./controls"
-import { PanelHeading } from "./LayerTree"
 
 interface Version {
   id: string
@@ -26,8 +26,6 @@ interface Version {
 
 export function HistoryPanel({ componentId, onClose }: { componentId: string; onClose: () => void }) {
   const replaceDoc = useEditor((s) => s.replaceDoc)
-  const markClean = useEditor((s) => s.markClean)
-  const doc = useEditor((s) => s.doc)
   const dirty = useEditor((s) => s.dirty)
 
   const [versions, setVersions] = React.useState<Version[] | null>(null)
@@ -72,15 +70,12 @@ export function HistoryPanel({ componentId, onClose }: { componentId: string; on
    * it — autosave is debounced and may not have fired yet.
    */
   const flush = React.useCallback(async () => {
-    if (!dirty) return
-    const response = await fetch(`/api/components/${componentId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ doc }),
-    })
-    if (!response.ok) throw new Error(`Could not save your changes (${response.status})`)
-    markClean()
-  }, [componentId, dirty, doc, markClean])
+    const outcome = await saveDoc(componentId)
+    if (outcome.status === "failed") throw new Error(outcome.message)
+    if (outcome.status === "conflict") {
+      throw new Error("This component changed somewhere else. Reload before saving a version.")
+    }
+  }, [componentId])
 
   const snapshot = async () => {
     setBusy(true)
@@ -112,9 +107,12 @@ export function HistoryPanel({ componentId, onClose }: { componentId: string; on
       })
       if (!response.ok) throw new Error(`Could not restore (${response.status})`)
 
-      const body = (await response.json()) as { doc: ComponentDoc }
+      const body = (await response.json()) as { doc: ComponentDoc | null; revision: number }
+      if (!body.doc) throw new Error("That version could not be read")
       // Keeps the undo stack: restoring is a normal edit you can walk back from.
-      replaceDoc(body.doc)
+      // The revision comes with it, or the next autosave would look like a
+      // conflict against the restore we just asked for.
+      replaceDoc(body.doc, { revision: body.revision })
       await load()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not restore")

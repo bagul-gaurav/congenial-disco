@@ -9,7 +9,7 @@
 import { randomBytes } from "node:crypto"
 
 import { createDoc } from "@/model/defaults"
-import { validate } from "@/model/ops"
+import { loadDoc } from "@/model/migrate"
 import type { ComponentDoc } from "@/model/types"
 
 import { prisma } from "./db"
@@ -40,9 +40,22 @@ export class DocumentInvalidError extends Error {
 }
 
 /** Rejects a structurally broken document before it can be persisted. */
-export function assertValidDoc(doc: ComponentDoc): void {
-  const issues = validate(doc)
-  if (issues.length > 0) throw new DocumentInvalidError(issues.map((i) => i.message))
+export function assertValidDoc(doc: unknown): ComponentDoc {
+  const result = loadDoc(doc)
+  if (!result.ok) throw new DocumentInvalidError(result.issues)
+  return result.doc
+}
+
+/**
+ * Reads a stored document through the version ladder.
+ *
+ * Every caller that pulls a `doc` column goes through here rather than casting
+ * the JSON: a snapshot taken months ago is exactly as likely to be on an older
+ * shape as a component nobody has opened since.
+ */
+export function readDoc(stored: unknown): ComponentDoc | null {
+  const result = loadDoc(stored)
+  return result.ok ? result.doc : null
 }
 
 export async function createComponent(projectId: string, name: string) {
@@ -53,18 +66,42 @@ export async function createComponent(projectId: string, name: string) {
 }
 
 /**
+ * The outcome of a save.
+ *
+ * A conflict is not an error: the caller holds a document based on a revision
+ * the server has already moved past, and needs to be told so rather than
+ * having its write applied on top.
+ */
+export type SaveResult =
+  | { status: "saved"; id: string; name: string; updatedAt: Date; revision: number }
+  | { status: "not-found" }
+  | { status: "conflict"; revision: number; doc: ComponentDoc | null }
+
+/**
  * Saves a document, taking a version snapshot when enough time has passed since
  * the last one. The snapshot records the document *before* this save, so
  * restoring a version returns you to a state you actually had.
+ *
+ * When `expectedRevision` is given the write is conditional on the stored
+ * revision still matching — the update itself carries the check, so two saves
+ * racing between the read and the write cannot both win.
  */
-export async function saveComponent(id: string, doc: ComponentDoc) {
+export async function saveComponent(
+  id: string,
+  doc: ComponentDoc,
+  expectedRevision?: number,
+): Promise<SaveResult> {
   assertValidDoc(doc)
 
   const existing = await prisma.component.findUnique({
     where: { id },
-    select: { id: true, name: true, doc: true },
+    select: { id: true, name: true, doc: true, revision: true },
   })
-  if (!existing) return null
+  if (!existing) return { status: "not-found" }
+
+  if (expectedRevision !== undefined && existing.revision !== expectedRevision) {
+    return { status: "conflict", revision: existing.revision, doc: readDoc(existing.doc) }
+  }
 
   const lastVersion = await prisma.componentVersion.findFirst({
     where: { componentId: id },
@@ -82,11 +119,33 @@ export async function saveComponent(id: string, doc: ComponentDoc) {
     await pruneVersions(id)
   }
 
-  return prisma.component.update({
-    where: { id },
-    data: { doc: doc as never, name: doc.name, docVersion: doc.version },
-    select: { id: true, name: true, updatedAt: true },
+  // Conditional on the revision read above, so a write that slipped in since
+  // then loses this update rather than being lost by it.
+  const written = await prisma.component.updateMany({
+    where: { id, revision: existing.revision },
+    data: {
+      doc: doc as never,
+      name: doc.name,
+      docVersion: doc.version,
+      revision: { increment: 1 },
+    },
   })
+
+  if (written.count === 0) {
+    const current = await prisma.component.findUnique({
+      where: { id },
+      select: { doc: true, revision: true },
+    })
+    if (!current) return { status: "not-found" }
+    return { status: "conflict", revision: current.revision, doc: readDoc(current.doc) }
+  }
+
+  const updated = await prisma.component.findUniqueOrThrow({
+    where: { id },
+    select: { id: true, name: true, updatedAt: true, revision: true },
+  })
+
+  return { status: "saved", ...updated }
 }
 
 /** Records an explicit, labelled snapshot regardless of the throttle. */
@@ -128,13 +187,22 @@ export async function restoreVersion(componentId: string, versionId: string) {
   })
   if (!version) return null
 
+  // Snapshots can be old enough to predate a shape change, so a restore reads
+  // through the same ladder as any other load — and stores the upgraded form.
+  const doc = readDoc(version.doc)
+  if (!doc) return null
+
   await snapshotComponent(componentId, "Before restore")
 
-  const doc = version.doc as unknown as ComponentDoc
   return prisma.component.update({
     where: { id: componentId },
-    data: { doc: version.doc as never, name: doc.name ?? version.name },
-    select: { id: true, name: true, updatedAt: true },
+    data: {
+      doc: doc as never,
+      docVersion: doc.version,
+      name: doc.name ?? version.name,
+      revision: { increment: 1 },
+    },
+    select: { id: true, name: true, updatedAt: true, revision: true },
   })
 }
 
@@ -149,14 +217,15 @@ export async function duplicateComponent(id: string) {
   const source = await prisma.component.findUnique({ where: { id } })
   if (!source) return null
 
-  const doc = source.doc as unknown as ComponentDoc
+  const doc = readDoc(source.doc)
+  if (!doc) return null
   const name = `${source.name} copy`
 
   return prisma.component.create({
     data: {
       name,
       projectId: source.projectId,
-      docVersion: source.docVersion,
+      docVersion: doc.version,
       doc: { ...doc, name } as never,
     },
   })
@@ -167,11 +236,12 @@ export async function renameComponent(id: string, name: string) {
   const source = await prisma.component.findUnique({ where: { id }, select: { doc: true } })
   if (!source) return null
 
-  const doc = source.doc as unknown as ComponentDoc
+  const doc = readDoc(source.doc)
+  if (!doc) return null
 
   return prisma.component.update({
     where: { id },
-    data: { name, doc: { ...doc, name } as never },
+    data: { name, doc: { ...doc, name } as never, revision: { increment: 1 } },
     select: { id: true, name: true },
   })
 }

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test"
 
-import { createComponent, openDemoComponent, selectLayer } from "./helpers"
+import { createComponent, selectLayer } from "./helpers"
 
 /** A component row on the projects page, located by its name. */
 function row(page: import("@playwright/test").Page, name: string) {

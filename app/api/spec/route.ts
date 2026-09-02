@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { generateSpec } from "@/ai/spec"
+import { SpecTimeoutError, generateSpec } from "@/ai/spec"
 
 const RequestSchema = z.object({
   description: z.string().min(3).max(2000),
@@ -38,6 +38,11 @@ export async function POST(request: Request) {
     })
     return NextResponse.json(spec)
   } catch (error) {
+    // A timeout is the caller's to retry, and says something different from a
+    // bad key — so it gets its own status rather than a generic bad gateway.
+    if (error instanceof SpecTimeoutError) {
+      return NextResponse.json({ error: error.message }, { status: 504 })
+    }
     // The upstream message names the actual problem (bad key, unknown model, a
     // model that cannot do structured outputs), which is what the user needs.
     const message = error instanceof Error ? error.message : "Spec generation failed"

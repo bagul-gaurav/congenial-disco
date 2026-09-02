@@ -51,7 +51,7 @@ You need Node 20+ and a Postgres database.
 ```bash
 npm install
 cp .env.example .env.local          # set DATABASE_URL (OPENROUTER_API_KEY optional)
-npm run db:push                     # create the tables
+npm run db:deploy                   # apply the migrations
 npm run db:seed                     # optional: a demo button to open and export
 npm run dev
 ```
@@ -60,6 +60,12 @@ Then open <http://localhost:3000>. The seed gives you a *Primary Button* with a
 bound label, a `tone` enum, a disabled flag and hover/press states already
 designed — open it and press ⌘/Ctrl+E to see the exported component
 immediately. Or create your own from the same page.
+
+Schema changes go through `prisma/migrations`: `npm run db:migrate` writes a new
+migration and applies it locally, `npm run db:deploy` applies the existing ones
+to a database that is not yours to reset. (`db:push` is still there for throwing
+a schema at a scratch database, but nothing that outlives the afternoon should
+be built that way — a database with no migration history has no upgrade path.)
 
 No Postgres handy? Anything speaking the wire protocol works:
 
@@ -134,6 +140,13 @@ keystroke; *Save a version* records a labelled point on demand. Restoring
 snapshots the current document first, so a restore is itself undoable — it is
 never the one action that loses work.
 
+A snapshot can be older than the document shape, so restoring reads it through
+the same version ladder (`src/model/migrate.ts`) as any other load: every stored
+document declares the version it was written under, and `loadDoc` walks it
+forward before anything touches it. A document written by a *newer* build is
+refused rather than guessed at — dropping the fields this build does not
+understand and then autosaving the result is how a rollback eats a design.
+
 **Share links** hand someone a read-only page: the component running, controls
 for its props and states, and the generated code to copy. The URL carries a
 32-hex-character token from a CSPRNG, and possession of it is the whole
@@ -141,9 +154,17 @@ authorisation — so the page is marked `noindex`, revoking clears the token and
 breaks the link immediately, and a revoked token 404s exactly like one that
 never existed.
 
-Both *Save a version* and *Create link* flush pending edits first. Autosave is
-debounced, so without that you could snapshot or share a document older than the
-one on your screen.
+Both *Save a version* and *Create link* flush pending edits first, through the
+same `src/editor/save.ts` autosave uses. Autosave is debounced, so without that
+you could snapshot or share a document older than the one on your screen.
+
+Saving is conditional. Every document carries the revision it was read at, and a
+save that claims a revision the server has moved past comes back `409` with the
+stored document rather than being applied — two tabs on one component is enough
+to hit this, and last-write-wins there means one of them silently loses an
+afternoon. The editor stops saving and says *Edited elsewhere — reload*. A save
+that fails for any other reason keeps the document dirty and retries with a
+backoff, and leaving the page with unsaved work asks first.
 
 ## Generated output
 
@@ -192,8 +213,13 @@ Three details in there are load-bearing:
 ```bash
 npm test          # unit, golden-file, compile and runtime passes — no services needed
 npm run typecheck
+npm run lint
 npm run test:e2e  # browser tests; needs Postgres (E2E_DATABASE_URL or DATABASE_URL)
 ```
+
+All four run in CI (`.github/workflows/ci.yml`) on every push: the three that
+need nothing but Node in one job, the browser tests against a Postgres service
+in another, so a type error does not wait on a browser to be told about it.
 
 Five layers, in increasing order of what they prove:
 
@@ -214,7 +240,10 @@ Five layers, in increasing order of what they prove:
    never mounted at all.
 
    Some of these tests are destructive by nature and the database persists, so a
-   global setup reseeds the demo component before each run.
+   global setup reseeds the demo component before each run. `e2e/api.spec.ts`
+   drives the save endpoint directly rather than through the editor, because the
+   rule it checks — a save based on a stale revision is refused — is enforced by
+   the database and cannot be proved against a mock.
 
 If a Chromium is already installed (as in most CI images), point Playwright at
 it with `CHROMIUM_PATH` rather than downloading another.
@@ -226,9 +255,28 @@ you get. Share links are unguessable but public, and anyone who can reach the
 app can edit anything in it. Do not deploy this to a public address as it
 stands.
 
+**No authorisation on component ids.** With no login there is nothing to check
+them against, but it is worth naming: every route takes a component id and acts
+on it, and the projects page's server actions take one from a form field. When
+login lands, ownership has to be checked in `src/server/components.ts` rather
+than at each call site.
+
+**`/api/spec` is an unmetered proxy to a paid API.** It has a 30-second deadline
+and nothing else — no rate limit, no per-user budget. Fine behind a login on a
+laptop; not fine on a public address.
+
+**Two dependency advisories need a major upgrade.** `postcss` inside Next 15
+(fixed in Next 16) and `deepmerge-ts` under the Prisma CLI (fixed in Prisma 7).
+Both are build-time, neither is reachable from a request, and both upgrades are
+breaking — so they are scheduled work rather than a patch bump. `npm audit`
+lists them.
+
 Also absent: vector editing (pen/bezier), component nesting and slots, and
 multiplayer. The flat `nodes` record and the pure ops layer are
-shaped for a CRDT, so collaboration is addable without a rewrite.
+shaped for a CRDT, so collaboration is addable without a rewrite. Changing the
+document shape for any of those means a step in `src/model/migrate.ts` and a
+bump to `DOC_VERSION`; stored documents and version snapshots then come forward
+on next read.
 
 ## Layout
 
@@ -236,11 +284,14 @@ shaped for a CRDT, so collaboration is addable without a rewrite.
 app/                    Next.js App Router — pages and API routes
 app/s/[token]/          the public read-only view of a shared component
 src/model/              document model: types, ops, resolve, values  (pure, no React)
+src/model/migrate.ts    the version ladder every stored document is read through
 src/emit/               style mapping + the two emitters
 src/editor/             store, canvas, panels
+src/editor/save.ts      the one path a document takes back to the server
 src/ai/spec.ts          plain-language → proposed component API (OpenRouter)
 src/server/             Prisma client, and component operations shared by the
                         API routes and the projects page's server actions
+prisma/migrations/      schema history; `db:deploy` applies it
 test/                   unit, golden, compile and runtime passes
-e2e/                    Playwright browser tests
+e2e/                    Playwright browser tests, and the save endpoint
 ```

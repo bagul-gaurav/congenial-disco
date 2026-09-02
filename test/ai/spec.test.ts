@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { SpecSchema, normalize, type Spec } from "@/ai/spec"
+import { SpecSchema, SpecTimeoutError, generateSpec, normalize, type Spec } from "@/ai/spec"
 
 function spec(overrides: Partial<Spec> = {}): Spec {
   return {
@@ -113,5 +113,48 @@ describe("spec validation", () => {
     })
 
     expect(parsed.success).toBe(true)
+  })
+})
+
+describe("the request deadline", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("gives up rather than holding the request open forever", async () => {
+    // A stalled upstream would otherwise hold this invocation until the
+    // platform's own timeout — longer than anyone waits, and billed throughout.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(new Error("aborted")))
+          }),
+      ),
+    )
+
+    await expect(
+      generateSpec({ description: "a button", apiKey: "k", timeoutMs: 10 }),
+    ).rejects.toBeInstanceOf(SpecTimeoutError)
+  })
+
+  it("passes the caller's own cancellation through", async () => {
+    const controller = new AbortController()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(new Error("aborted by caller")))
+          }),
+      ),
+    )
+
+    const pending = generateSpec({ description: "a button", apiKey: "k", signal: controller.signal })
+    controller.abort()
+
+    // Not a timeout: the caller asked, and the message should say so.
+    await expect(pending).rejects.toThrow("aborted by caller")
   })
 })

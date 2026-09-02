@@ -24,7 +24,7 @@ import { useEditor, type Tool } from "@/editor/store"
 import { removeNode } from "@/model/ops"
 import type { ComponentDoc } from "@/model/types"
 
-import { useAutosave } from "./useAutosave"
+import { useAutosave, useUnloadGuard } from "./useAutosave"
 
 const TOOLS: Array<{ id: Tool; label: string; shortcut: string }> = [
   { id: "select", label: "Select", shortcut: "V" },
@@ -37,9 +37,11 @@ const TOOLS: Array<{ id: Tool; label: string; shortcut: string }> = [
 export interface EditorProps {
   componentId: string
   initialDoc: ComponentDoc
+  /** The stored revision `initialDoc` was read at; every save is conditional on it. */
+  initialRevision: number
 }
 
-export function Editor({ componentId, initialDoc }: EditorProps) {
+export function Editor({ componentId, initialDoc, initialRevision }: EditorProps) {
   const replaceDoc = useEditor((s) => s.replaceDoc)
   // Export and history are both full-surface overlays, so only one is open at
   // a time rather than each carrying its own boolean.
@@ -48,10 +50,11 @@ export function Editor({ componentId, initialDoc }: EditorProps) {
   // Load the document once, without leaving an undo step that would let the
   // user "undo" back to a blank starter document.
   React.useEffect(() => {
-    replaceDoc(initialDoc, { resetHistory: true })
-  }, [initialDoc, replaceDoc])
+    replaceDoc(initialDoc, { resetHistory: true, revision: initialRevision })
+  }, [initialDoc, initialRevision, replaceDoc])
 
   const status = useAutosave(componentId)
+  useUnloadGuard()
   useKeyboardShortcuts({ onExport: () => setOverlay("export") })
 
   return (

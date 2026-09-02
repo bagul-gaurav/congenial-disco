@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { prisma } from "@/server/db"
-import { restoreVersion, snapshotComponent } from "@/server/components"
+import { readDoc, restoreVersion, snapshotComponent } from "@/server/components"
 
 interface Params {
   params: Promise<{ id: string }>
@@ -32,8 +32,18 @@ export async function POST(request: Request, { params }: Params) {
     const restored = await restoreVersion(id, body.versionId)
     if (!restored) return NextResponse.json({ error: "Version not found" }, { status: 404 })
 
-    const component = await prisma.component.findUnique({ where: { id }, select: { doc: true } })
-    return NextResponse.json({ restored: true, doc: component?.doc })
+    const component = await prisma.component.findUnique({
+      where: { id },
+      select: { doc: true, revision: true },
+    })
+    // The restore bumped the revision, so the editor is handed the new one
+    // along with the document — otherwise its next save would look like a
+    // conflict against the restore it just asked for.
+    return NextResponse.json({
+      restored: true,
+      doc: component ? readDoc(component.doc) : null,
+      revision: component?.revision ?? 0,
+    })
   }
 
   const version = await snapshotComponent(id, body.label?.trim() || "Manual save")

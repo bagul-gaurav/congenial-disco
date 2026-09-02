@@ -1,0 +1,92 @@
+# CI for Studio.
+#
+# The repository had no automated checks at all: the test suite, the typecheck
+# and the codegen golden files were only ever as good as whoever remembered to
+# run them. Everything below is a script that already exists in package.json —
+# this file only makes sure they run on every push.
+#
+# Two jobs rather than one: `checks` needs nothing but Node and fails in under a
+# minute, `browser` needs a database and a production build. The fast one should
+# not wait for the slow one to tell you a type is wrong.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Prisma's client generation reads this; nothing in `checks` connects.
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/studio
+
+jobs:
+  checks:
+    name: Lint, typecheck, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # The generated client is what the typecheck reads the schema through.
+      - run: npm run db:generate
+
+      - run: npm run lint
+      - run: npm run typecheck
+
+      # Unit, golden-file, compile and runtime passes. No services needed.
+      - run: npm test
+
+  browser:
+    name: Browser tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: studio
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run db:generate
+
+      # `migrate deploy` rather than `db push`: this is the same path a real
+      # deployment takes, so a broken migration fails here rather than there.
+      - run: npm run db:deploy
+
+      - run: npx playwright install --with-deps chromium
+
+      - run: npm run build
+
+      - run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
