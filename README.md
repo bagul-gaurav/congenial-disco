@@ -211,11 +211,20 @@ Three details in there are load-bearing:
 ## Testing
 
 ```bash
-npm test          # unit, golden-file, compile and runtime passes — no services needed
+npm run setup      # one-time: installs deps, starts Postgres, creates and
+                    # migrates the dev + E2E databases. Pass --build to also
+                    # `npm run build`, which npm run test:e2e needs.
+npm test           # unit, golden-file, compile and runtime passes — no services needed
 npm run typecheck
 npm run lint
-npm run test:e2e  # browser tests; needs Postgres (E2E_DATABASE_URL or DATABASE_URL)
+npm run test:e2e   # browser tests; needs Postgres (E2E_DATABASE_URL or DATABASE_URL)
 ```
+
+`scripts/setup-dev.sh` assumes a Debian/Ubuntu image with the `postgresql`
+apt package already installed (as in this project's containers) and
+passwordless sudo for the `postgres` service user; it's safe to re-run. It
+prints the `DATABASE_URL`/`E2E_DATABASE_URL` values to export before running
+`npm run test:e2e`.
 
 All four run in CI (`.github/workflows/ci.yml`) on every push: the three that
 need nothing but Node in one job, the browser tests against a Postgres service
