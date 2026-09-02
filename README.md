@@ -51,10 +51,19 @@ You need Node 20+ and a Postgres database.
 ```bash
 npm install
 cp .env.example .env.local          # set DATABASE_URL (OPENROUTER_API_KEY optional)
+cp .env.local .env                  # the Prisma CLI reads .env, not .env.local
 npm run db:deploy                   # apply the migrations
-npm run db:seed                     # optional: a demo button to open and export
+DATABASE_URL="postgresql://..." npm run db:seed   # optional: a demo button
 npm run dev
 ```
+
+Two env files, because two tools disagree about the name. Next reads
+`.env.local`; the Prisma CLI reads `.env` and nothing else, so `db:deploy`
+against only a `.env.local` fails with `Environment variable not found:
+DATABASE_URL`. Keeping both with the same contents is the least surprising fix
+until one of them changes its mind. `db:seed` runs the script under `tsx`
+rather than the Prisma CLI, which loads neither file — hence the explicit
+`DATABASE_URL` on that line.
 
 Then open <http://localhost:3000>. The seed gives you a *Primary Button* with a
 bound label, a `tone` enum, a disabled flag and hover/press states already
@@ -214,8 +223,15 @@ Three details in there are load-bearing:
 npm test          # unit, golden-file, compile and runtime passes — no services needed
 npm run typecheck
 npm run lint
+
+npm run build     # the browser tests drive a production server, so build first
 npm run test:e2e  # browser tests; needs Postgres (E2E_DATABASE_URL or DATABASE_URL)
 ```
+
+Playwright starts `next start` rather than `next dev` — closer to what a user
+runs, and far faster than compiling each route on first hit — so a missing
+build fails the run before any test does, with *"Could not find a production
+build in the '.next' directory"*.
 
 All four run in CI (`.github/workflows/ci.yml`) on every push: the three that
 need nothing but Node in one job, the browser tests against a Postgres service

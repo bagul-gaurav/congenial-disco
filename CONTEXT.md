@@ -135,8 +135,7 @@ docker run --name studio-db -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgr
 **Trap #1 — two env files.** The app itself reads `.env.local`, but the database
 tooling only reads `.env`. With just `.env.local`, `npm run db:deploy` fails with
 `Environment variable not found: DATABASE_URL`. Keeping both files (identical
-content) is the quickest fix. *The README's setup instructions are wrong on this
-point.*
+content) is the quickest fix.
 
 **Trap #2 — the seed script reads neither file.** `npm run db:seed` needs
 `DATABASE_URL` set in the shell, even when both env files exist. Same error
@@ -147,8 +146,10 @@ message if you forget.
 *"Could not find a production build"*. If the machine already has a Chromium,
 point at it with `CHROMIUM_PATH` instead of downloading another.
 
-Neither trap is dangerous; both just look like the project is broken when it
-isn't. Fixing them properly is on the roadmap below.
+None of these is dangerous; each just looks like the project is broken when it
+isn't. All three are now written down in the README, but they are still traps a
+newcomer walks into before reading it — making them go away is the roadmap item
+below.
 
 ## Roadmap
 
@@ -156,8 +157,11 @@ Ordered by what unblocks the most. The first three are what stand between this
 and being usable by anyone other than its author.
 
 ### 1. Fix the setup papercuts — hours
-The two env-file traps and the missing build step above. Either make the tooling
-read one file, or correct the README. Cheap, and it's the first impression.
+The README now documents the two env-file traps and the missing build step, but
+documenting a papercut is not the same as removing it. Make the tooling read one
+env file (a loader in the seed script, or a single `.env` the app also reads),
+and have the browser-test script build first rather than failing when you
+forget. Cheap, and it is the first impression the project makes.
 
 ### 2. Authentication — the gate on everything else
 **There is no login.** An environment variable decides whose workspace you get,
