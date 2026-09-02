@@ -23,7 +23,7 @@
  */
 
 import { toIdentifier, toPascalCase, uniqueIdentifier } from "@/model/identifiers"
-import { isBinding } from "@/model/types"
+import { isBinding, isTokenRef } from "@/model/types"
 import type {
   ComponentDoc,
   FrameNode,
@@ -36,11 +36,12 @@ import type {
   SizeValue,
   StateDef,
   StateTrigger,
+  TokenId,
   Variant,
 } from "@/model/types"
 import { resolve, variantsAffecting } from "@/model/resolve"
 
-import { isBindRef, styleFor, variantStyleFor, type CSSObject } from "./style"
+import { isBindRef, isTokenValueRef, styleFor, variantStyleFor, type CSSObject } from "./style"
 import { emitPropertyControls } from "./controls"
 
 const INDENT = "    " // Framer's code editor uses four spaces.
@@ -88,22 +89,30 @@ function isExprRef(value: unknown): value is ExprRef {
 type EmitValue = CSSObject[string] | ExprRef
 type EmitObject = Record<string, EmitValue>
 
-function renderValue(value: EmitValue, propName: (id: PropId) => string): string {
+/** How a reference is written into the source. */
+interface ValueNames {
+  prop: (id: PropId) => string
+  token: (id: TokenId) => string
+  /** Called for each token reference written, so unused ones are not emitted. */
+  use?: (id: TokenId) => void
+}
+
+function renderValue(value: EmitValue, names: ValueNames): string {
   if (isExprRef(value)) return value.__expr
-  if (isBindRef(value)) return propName(value.__bind) // a prop reference, not a literal
+  if (isBindRef(value)) return names.prop(value.__bind) // a prop reference, not a literal
+  if (isTokenValueRef(value)) {
+    names.use?.(value.__token)
+    return names.token(value.__token)
+  }
   return typeof value === "number" ? String(value) : JSON.stringify(value)
 }
 
-function serializeStyle(
-  style: EmitObject,
-  propName: (id: PropId) => string,
-  depth: number,
-): string {
+function serializeStyle(style: EmitObject, names: ValueNames, depth: number): string {
   const entries = Object.entries(style)
   if (entries.length === 0) return "{}"
 
   const body = entries
-    .map(([k, value]) => `${pad(depth + 1)}${key(k)}: ${renderValue(value, propName)},`)
+    .map(([k, value]) => `${pad(depth + 1)}${key(k)}: ${renderValue(value, names)},`)
     .join("\n")
 
   return `{\n${body}\n${pad(depth)}}`
@@ -112,11 +121,11 @@ function serializeStyle(
 /** `{ rest: {...}, hover: {...} }` — a framer-motion variants map. */
 function serializeVariants(
   entries: Array<[string, EmitObject]>,
-  propName: (id: PropId) => string,
+  names: ValueNames,
   depth: number,
 ): string {
   const body = entries
-    .map(([label, style]) => `${pad(depth + 1)}${label}: ${serializeStyle(style, propName, depth + 1)},`)
+    .map(([label, style]) => `${pad(depth + 1)}${label}: ${serializeStyle(style, names, depth + 1)},`)
     .join("\n")
 
   return `{\n${body}\n${pad(depth)}}`
@@ -126,9 +135,8 @@ function serializeVariants(
 // Naming
 // ---------------------------------------------------------------------------
 
-interface Names {
+interface Names extends ValueNames {
   component: string
-  prop: (id: PropId) => string
   /** Const holding the composed style the element actually uses. */
   styleConst: (nodeId: NodeId) => string
   /** Const holding the unconditional base style, when a composed one exists. */
@@ -143,11 +151,22 @@ function buildNames(doc: ComponentDoc, tree: ResolvedTree): Names {
   const component = toPascalCase(doc.name, "Component")
 
   const propNames = new Map<PropId, string>()
-  const taken = new Set<string>(["style", "props", "React", "motion"])
+  const taken = new Set<string>(["style", "props", "React", "motion", "tokens"])
   for (const prop of doc.props) {
     const name = uniqueIdentifier(toIdentifier(prop.name), taken)
     taken.add(name)
     propNames.set(prop.id, name)
+  }
+
+  // Token names live inside the emitted `tokens` object, so they only have to
+  // be unique among themselves — a token called "label" cannot collide with a
+  // prop of the same name.
+  const tokenNames = new Map<TokenId, string>()
+  const tokensTaken = new Set<string>()
+  for (const token of doc.tokens) {
+    const name = uniqueIdentifier(toIdentifier(token.name, "token"), tokensTaken)
+    tokensTaken.add(name)
+    tokenNames.set(token.id, name)
   }
 
   // Stems are only unique among themselves. They are never emitted on their
@@ -196,6 +215,7 @@ function buildNames(doc: ComponentDoc, tree: ResolvedTree): Names {
   return {
     component,
     prop: (id) => propNames.get(id) ?? "undefined",
+    token: (id) => `tokens.${tokenNames.get(id) ?? "unknown"}`,
     styleConst: (nodeId) => styleNames.get(nodeId) ?? "layerStyle",
     baseConst: (nodeId) => baseNames.get(nodeId) ?? "layerBase",
     variantConst: (nodeId, variantId) =>
@@ -231,6 +251,8 @@ function layoutAnnotation(size: SizeValue): string {
 interface EmitContext {
   tree: ResolvedTree
   names: Names
+  /** Tokens actually referenced, collected as the tree is emitted. */
+  usedTokens: Set<TokenId>
   /** The state a variant targets, for variants that target one. */
   stateByVariant: Map<string, StateDef>
   /** Identifier of the boolean prop backing a `disabled` state, if any. */
@@ -322,7 +344,9 @@ function restStyle(
 
   const fallback = (k: string): string | number | undefined => {
     const value = base[k]
-    if (value !== undefined && !isBindRef(value)) return value
+    // A reference has no literal to fall back to; the composed style const the
+    // resting entry reads from already resolves it.
+    if (value !== undefined && !isBindRef(value) && !isTokenValueRef(value)) return value
     if (k === "scale" || k === "opacity") return 1
     // The base omits `display` for nothing, but a bound fill has no literal to
     // fall back to, so leave those to the composed value alone.
@@ -371,7 +395,9 @@ function styleExpression(ctx: EmitContext, nodeId: NodeId, isRoot: boolean, dept
 
 function contentExpression(ctx: EmitContext, node: Node): string {
   if (node.type !== "text") return ""
-  return isBinding(node.content) ? `{${ctx.names.prop(node.content.bind)}}` : escapeText(node.content)
+  if (isBinding(node.content)) return `{${ctx.names.prop(node.content.bind)}}`
+  if (isTokenRef(node.content)) return `{${ctx.names.token(node.content.token)}}`
+  return escapeText(node.content)
 }
 
 /** JSX text is mostly literal, but braces and angle brackets must be escaped. */
@@ -412,19 +438,19 @@ function emitNode(ctx: EmitContext, resolved: ResolvedNode, depth: number, isRoo
     const constName = ctx.names.variantConst(nodeId, variant.id)
     const delta = variantStyleFor(node, resolved.variantStyles[variant.id], { parent })
     ctx.declarations.push(
-      `${INDENT}const ${constName}: React.CSSProperties = ${serializeStyle(delta, ctx.names.prop, 1)}`,
+      `${INDENT}const ${constName}: React.CSSProperties = ${serializeStyle(delta, ctx.names, 1)}`,
     )
     conditionals.push({ test, constName })
   }
 
   if (conditionals.length === 0) {
     ctx.declarations.push(
-      `${INDENT}const ${styleName}: React.CSSProperties = ${serializeStyle(baseStyle, ctx.names.prop, 1)}`,
+      `${INDENT}const ${styleName}: React.CSSProperties = ${serializeStyle(baseStyle, ctx.names, 1)}`,
     )
   } else {
     const baseName = ctx.names.baseConst(nodeId)
     ctx.declarations.push(
-      `${INDENT}const ${baseName}: React.CSSProperties = ${serializeStyle(baseStyle, ctx.names.prop, 1)}`,
+      `${INDENT}const ${baseName}: React.CSSProperties = ${serializeStyle(baseStyle, ctx.names, 1)}`,
     )
 
     const spreads = [
@@ -446,7 +472,7 @@ function emitNode(ctx: EmitContext, resolved: ResolvedNode, depth: number, isRoo
     for (const [trigger, delta] of deltas) entries.push([STATE_LABEL[trigger], delta])
 
     ctx.declarations.push(
-      `${INDENT}const ${ctx.names.motionConst(nodeId)} = ${serializeVariants(entries, ctx.names.prop, 1)}`,
+      `${INDENT}const ${ctx.names.motionConst(nodeId)} = ${serializeVariants(entries, ctx.names, 1)}`,
     )
   }
 
@@ -539,6 +565,29 @@ function propsType(doc: ComponentDoc, names: Names): string {
   return `interface Props {\n${fields ? `${fields}\n` : ""}${INDENT}style?: React.CSSProperties\n}`
 }
 
+/**
+ * The design tokens the component references, as a module-level object.
+ *
+ * Only referenced tokens are emitted: a component that uses three colours
+ * should not carry a whole design system into Framer. `as const` keeps the
+ * literal types, so a token used where React expects a union still type checks.
+ */
+function emitTokens(doc: ComponentDoc, names: Names, used: Set<TokenId>): string {
+  const referenced = doc.tokens.filter((token) => used.has(token.id))
+  if (referenced.length === 0) return ""
+
+  const entries = referenced
+    .map((token) => {
+      const name = names.token(token.id).replace(/^tokens\./, "")
+      const value = typeof token.value === "number" ? String(token.value) : JSON.stringify(token.value)
+      const comment = token.description ? ` // ${token.description}` : ""
+      return `${INDENT}${key(name)}: ${value},${comment}`
+    })
+    .join("\n")
+
+  return `const tokens = {\n${entries}\n} as const`
+}
+
 export interface EmitResult {
   /** The complete .tsx source. */
   code: string
@@ -579,16 +628,22 @@ export function emitComponent(doc: ComponentDoc): EmitResult {
   const ctx: EmitContext = {
     tree,
     names,
+    usedTokens: new Set(),
     stateByVariant,
     disabledProp,
     triggers,
     declarations: [],
   }
 
+  // `use` is attached here rather than in buildNames so the recorder and the
+  // context that owns the set are created together.
+  ctx.names.use = (id) => ctx.usedTokens.add(id)
+
   const jsx = emitNode(ctx, tree.root, 2, true)
 
   const usesMotion = jsx.includes("<motion.")
   const controls = emitPropertyControls(names.component, doc.props)
+  const tokensBlock = emitTokens(doc, names, ctx.usedTokens)
 
   const imports = [
     `import * as React from "react"`,
@@ -622,6 +677,8 @@ export function emitComponent(doc: ComponentDoc): EmitResult {
   const code = [
     imports,
     "",
+    tokensBlock || null,
+    tokensBlock ? "" : null,
     propsType(doc, names),
     "",
     annotations,

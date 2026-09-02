@@ -23,11 +23,16 @@ const generated = import.meta.glob<{ default: React.ComponentType<Record<string,
 )
 
 let Button: React.ComponentType<Record<string, unknown>>
+let TokenCard: React.ComponentType<Record<string, unknown>>
 
 beforeAll(async () => {
   const load = generated["../generated/RuntimeButton.tsx"]
   if (!load) throw new Error("RuntimeButton.tsx was not generated")
   Button = (await load()).default
+
+  const loadTokens = generated["../generated/RuntimeTokens.tsx"]
+  if (!loadTokens) throw new Error("RuntimeTokens.tsx was not generated")
+  TokenCard = (await loadTokens()).default
 })
 
 describe("a generated component, executed", () => {
@@ -117,5 +122,40 @@ describe("a generated component, executed", () => {
     fireEvent.pointerUp(off.container.firstElementChild as HTMLElement)
 
     expect(taps).not.toContain("disabled")
+  })
+})
+
+describe("a generated component that uses design tokens", () => {
+  it("renders the token values", () => {
+    const { container } = render(<TokenCard />)
+    const root = container.firstElementChild as HTMLElement
+    const label = container.querySelector("p") as HTMLElement
+
+    // The same values the canvas preview resolves — proving the two paths
+    // agree about tokens, not just about literals.
+    expect(root.style.backgroundColor).toBe("rgb(59, 91, 253)")
+    expect(root.style.gap).toBe("12px")
+    expect(label.style.color).toBe("rgb(255, 255, 255)")
+    expect(label.style.fontSize).toBe("15px")
+  })
+
+  it("applies a tokenised radius through the longhand properties", () => {
+    const { container } = render(<TokenCard />)
+    const root = container.firstElementChild as HTMLElement
+
+    // The shorthand cannot carry a reference, so codegen emits four longhands;
+    // this is where that decision either works in a browser or does not.
+    expect(root.style.borderTopLeftRadius).toBe("8px")
+    expect(root.style.borderBottomRightRadius).toBe("8px")
+  })
+
+  it("applies tokenised padding on every side", () => {
+    const { container } = render(<TokenCard />)
+    const root = container.firstElementChild as HTMLElement
+
+    expect(root.style.paddingTop).toBe("12px")
+    expect(root.style.paddingRight).toBe("12px")
+    expect(root.style.paddingBottom).toBe("12px")
+    expect(root.style.paddingLeft).toBe("12px")
   })
 })

@@ -7,6 +7,7 @@
 
 import {
   DOC_VERSION,
+  type Bindable,
   type ComponentDoc,
   type Corners,
   type FrameNode,
@@ -21,6 +22,8 @@ import {
   type Size,
   type StateDef,
   type StateTrigger,
+  type Token,
+  type TokenType,
   type TextNode,
   type TextStyle,
   type Variant,
@@ -46,15 +49,15 @@ export function __resetIdCounter(): void {
   counter = 0
 }
 
-export function padding(all: number): Padding
-export function padding(vertical: number, horizontal: number): Padding
-export function padding(a: number, b?: number): Padding {
+export function padding(all: Bindable<number>): Padding
+export function padding(vertical: Bindable<number>, horizontal: Bindable<number>): Padding
+export function padding(a: Bindable<number>, b?: Bindable<number>): Padding {
   const v = a
   const h = b ?? a
   return { top: v, right: h, bottom: v, left: h }
 }
 
-export function corners(all: number): Corners {
+export function corners(all: Bindable<number>): Corners {
   return { topLeft: all, topRight: all, bottomRight: all, bottomLeft: all }
 }
 
@@ -165,6 +168,46 @@ export function createProp(overrides: Partial<PropDef> & { name: string; type: P
   }
 }
 
+export function createToken(
+  name: string,
+  type: TokenType,
+  value: string | number,
+  description?: string,
+): Token {
+  return { id: newId("t"), name, type, value, description }
+}
+
+/**
+ * A starter set, offered rather than imposed.
+ *
+ * A design tool with an empty token list does not teach you what tokens are
+ * for, but a set you did not ask for is noise in a component that needs two
+ * colours. So new documents start empty and this is one click away.
+ */
+export function starterTokens(): Token[] {
+  return [
+    createToken("Primary", "color", "#3b5bfd"),
+    createToken("Surface", "color", "#ffffff"),
+    createToken("Text", "color", "#111111"),
+    createToken("Muted", "color", "#71717a"),
+
+    createToken("Space 1", "space", 4),
+    createToken("Space 2", "space", 8),
+    createToken("Space 3", "space", 12),
+    createToken("Space 4", "space", 16),
+    createToken("Space 5", "space", 24),
+
+    createToken("Radius sm", "radius", 4),
+    createToken("Radius md", "radius", 8),
+    createToken("Radius lg", "radius", 16),
+
+    createToken("Body", "fontSize", 16),
+    createToken("Heading", "fontSize", 24),
+
+    createToken("Sans", "fontFamily", "Inter, system-ui, sans-serif"),
+  ]
+}
+
 export function createState(name: string, trigger: StateTrigger, propId?: string): StateDef {
   return { id: newId("s"), name, trigger, propId }
 }
@@ -194,6 +237,7 @@ export function createDoc(name = "Component"): ComponentDoc {
     description: "",
     props: [],
     states: [],
+    tokens: [],
     nodes,
     root: root.id,
     variants: [],

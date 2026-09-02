@@ -1,0 +1,71 @@
+import * as React from "react"
+
+const tokens = {
+    primary: "#3b5bfd",
+    onPrimary: "#ffffff",
+    space3: 12,
+    radiusMd: 8,
+    body: 15,
+} as const
+
+interface Props {
+    style?: React.CSSProperties
+}
+
+/**
+ * Every value comes from a token.
+ *
+ * @framerSupportedLayoutWidth auto
+ * @framerSupportedLayoutHeight auto
+ */
+export default function TokenCard(props: Props) {
+    const { style } = props
+
+    const rootStyle: React.CSSProperties = {
+        width: "fit-content",
+        height: "fit-content",
+        paddingTop: tokens.space3,
+        paddingRight: tokens.space3,
+        paddingBottom: tokens.space3,
+        paddingLeft: tokens.space3,
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: tokens.space3,
+        backgroundColor: tokens.primary,
+        borderTopLeftRadius: tokens.radiusMd,
+        borderTopRightRadius: tokens.radiusMd,
+        borderBottomRightRadius: tokens.radiusMd,
+        borderBottomLeftRadius: tokens.radiusMd,
+    }
+    const labelStyle: React.CSSProperties = {
+        width: "fit-content",
+        flexShrink: 0,
+        height: "fit-content",
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: tokens.body,
+        fontWeight: 600,
+        lineHeight: 1.2,
+        textAlign: "center",
+        color: tokens.onPrimary,
+        whiteSpace: "pre-wrap",
+        margin: 0,
+        display: "block",
+    }
+
+    return (
+        <div
+            style={{
+                ...rootStyle,
+                ...style,
+            }}
+        >
+            <p
+                style={labelStyle}
+            >
+                Tokenised
+            </p>
+        </div>
+    )
+}

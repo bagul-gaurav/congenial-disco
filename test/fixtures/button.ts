@@ -81,6 +81,7 @@ export function buttonFixture(): ButtonFixture {
     description: "A button with tone and disabled states.",
     props: [],
     states: [],
+    tokens: [],
     nodes: { [root.id]: root },
     root: root.id,
     variants: [],

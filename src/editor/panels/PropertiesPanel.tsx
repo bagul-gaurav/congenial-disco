@@ -18,7 +18,17 @@ import * as React from "react"
 import { useActiveVariant, useEditor, useSelectedNode } from "@/editor/store"
 import { corners, createProp, defaultValueFor } from "@/model/defaults"
 import { addProp, bindField, clearOverride, unbindField, type BindableField } from "@/model/ops"
-import { isBinding, type Node, type PropType, type SizeValue } from "@/model/types"
+import { literalOf, tokenById, tokensOfType } from "@/model/values"
+import {
+  isBinding,
+  isTokenRef,
+  type Bindable,
+  type Node,
+  type PropType,
+  type SizeValue,
+  type TokenId,
+  type TokenType,
+} from "@/model/types"
 
 import { Button, ColorInput, Field, NumberInput, Select, TextInput } from "./controls"
 import { PanelHeading } from "./LayerTree"
@@ -91,6 +101,80 @@ function OverrideReset({ nodeId, variantId }: { nodeId: string; variantId: strin
   )
 }
 
+/**
+ * A value field that can also read from a design token.
+ *
+ * Wraps whatever control the value normally uses. When a token drives the field
+ * the control is replaced by the token's name, because there is no literal to
+ * edit any more — changing it means changing the token, which is a different
+ * action in a different place.
+ */
+function Tokenized<T extends string | number>({
+  value,
+  tokenType,
+  fallback,
+  onLiteral,
+  onToken,
+  children,
+  testId,
+}: {
+  value: Bindable<T> | undefined
+  tokenType: TokenType
+  fallback: T
+  onLiteral: (value: T) => void
+  onToken: (id: TokenId) => void
+  children: (literal: T) => React.ReactNode
+  testId?: string
+}) {
+  const doc = useEditor((s) => s.doc)
+  // Only tokens of a matching type are offered: a spacing scale is not a set of
+  // colours, and a picker that lists everything is no help.
+  const available = tokensOfType(doc, tokenType)
+
+  if (isTokenRef(value)) {
+    const token = tokenById(doc.tokens, value.token)
+    return (
+      <span className="flex min-w-0 flex-1 items-center gap-2">
+        <code
+          data-testid={testId && `${testId}-token`}
+          className="min-w-0 flex-1 truncate rounded bg-emerald-500/20 px-2 py-1 text-[11px] text-chrome-text"
+        >
+          {token?.name ?? "missing token"}
+        </code>
+        <Button
+          title="Replace with the token's current value"
+          data-testid={testId && `${testId}-detach`}
+          onClick={() => onLiteral((token?.value as T | undefined) ?? fallback)}
+        >
+          Detach
+        </Button>
+      </span>
+    )
+  }
+
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-2">
+      {children(literalOf(value, fallback))}
+      {available.length > 0 && (
+        <select
+          value=""
+          data-testid={testId && `${testId}-picker`}
+          title="Use a design token"
+          onChange={(event) => event.target.value && onToken(event.target.value)}
+          className="w-16 shrink-0 rounded border border-chrome-border bg-chrome-bg px-1 py-1 text-[11px] text-chrome-muted outline-none focus:border-chrome-accent"
+        >
+          <option value="">token</option>
+          {available.map((token) => (
+            <option key={token.id} value={token.id}>
+              {token.name}
+            </option>
+          ))}
+        </select>
+      )}
+    </span>
+  )
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="border-b border-chrome-border py-2 last:border-b-0">
@@ -152,6 +236,29 @@ function LayoutSection({ node }: { node: Node }) {
   if (node.type !== "frame") return null
   const { layout } = node
 
+  /** Padding is edited uniformly; the model keeps four sides for later. */
+  const setPadding = (value: Bindable<number>) => {
+    // Structural rather than cosmetic, so it stays a base-design change.
+    if (activeVariantId) return
+    apply((doc) => {
+      const current = doc.nodes[node.id]
+      if (current?.type !== "frame") return doc
+      return {
+        ...doc,
+        nodes: {
+          ...doc.nodes,
+          [node.id]: {
+            ...current,
+            layout: {
+              ...current.layout,
+              padding: { top: value, right: value, bottom: value, left: value },
+            },
+          },
+        },
+      }
+    })
+  }
+
   return (
     <Section title="Layout">
       <Field label="Mode">
@@ -201,7 +308,18 @@ function LayoutSection({ node }: { node: Node }) {
             />
           </Field>
           <Field label="Gap">
-            <NumberInput value={layout.gap} onCommit={(gap) => edit(node.id, { layout: { gap } })} />
+            <Tokenized
+              value={layout.gap}
+              tokenType="space"
+              fallback={0}
+              testId="gap"
+              onLiteral={(gap) => edit(node.id, { layout: { gap } })}
+              onToken={(token) => edit(node.id, { layout: { gap: { token } } })}
+            >
+              {(gap) => (
+                <NumberInput value={gap} onCommit={(next) => edit(node.id, { layout: { gap: next } })} />
+              )}
+            </Tokenized>
           </Field>
           <Field label="Align">
             <Select
@@ -224,29 +342,16 @@ function LayoutSection({ node }: { node: Node }) {
       )}
 
       <Field label="Padding">
-        <NumberInput
+        <Tokenized
           value={layout.padding.top}
-          onCommit={(value) => {
-            if (activeVariantId) return
-            apply((doc) => {
-              const current = doc.nodes[node.id]
-              if (current?.type !== "frame") return doc
-              return {
-                ...doc,
-                nodes: {
-                  ...doc.nodes,
-                  [node.id]: {
-                    ...current,
-                    layout: {
-                      ...current.layout,
-                      padding: { top: value, right: value, bottom: value, left: value },
-                    },
-                  },
-                },
-              }
-            })
-          }}
-        />
+          tokenType="space"
+          fallback={0}
+          testId="padding"
+          onLiteral={setPadding}
+          onToken={(token) => setPadding({ token })}
+        >
+          {(value) => <NumberInput value={value} onCommit={setPadding} />}
+        </Tokenized>
       </Field>
     </Section>
   )
@@ -256,25 +361,52 @@ function AppearanceSection({ node }: { node: Node }) {
   const edit = useEditor((s) => s.edit)
   const fill = node.style.fill
 
+  const setBorderColor = (color: Bindable<string>) =>
+    edit(node.id, {
+      style: { border: { width: node.style.border?.width ?? 1, color, style: "solid" } },
+    })
+
   return (
     <Section title="Appearance">
       <Field label="Fill">
         {isBinding(fill) ? (
           <BoundValue propId={fill.bind} nodeId={node.id} field="fill" />
         ) : (
-          <ColorInput
-            value={fill ?? "#ffffff"}
-            testId="fill-input"
-            onCommit={(value) => edit(node.id, { style: { fill: value } })}
-          />
+          <Tokenized
+            value={fill}
+            tokenType="color"
+            fallback="#ffffff"
+            testId="fill"
+            onLiteral={(value) => edit(node.id, { style: { fill: value } })}
+            onToken={(token) => edit(node.id, { style: { fill: { token } } })}
+          >
+            {(value) => (
+              <ColorInput
+                value={value}
+                testId="fill-input"
+                onCommit={(next) => edit(node.id, { style: { fill: next } })}
+              />
+            )}
+          </Tokenized>
         )}
       </Field>
 
       <Field label="Radius">
-        <NumberInput
-          value={node.style.corners?.topLeft ?? 0}
-          onCommit={(value) => edit(node.id, { style: { corners: corners(value) } })}
-        />
+        <Tokenized
+          value={node.style.corners?.topLeft}
+          tokenType="radius"
+          fallback={0}
+          testId="radius"
+          onLiteral={(value) => edit(node.id, { style: { corners: corners(value) } })}
+          onToken={(token) => edit(node.id, { style: { corners: corners({ token }) } })}
+        >
+          {(value) => (
+            <NumberInput
+              value={value}
+              onCommit={(next) => edit(node.id, { style: { corners: corners(next) } })}
+            />
+          )}
+        </Tokenized>
       </Field>
 
       <Field label="Opacity">
@@ -301,14 +433,16 @@ function AppearanceSection({ node }: { node: Node }) {
       </Field>
       {(node.style.border?.width ?? 0) > 0 && (
         <Field label="Border color">
-          <ColorInput
-            value={node.style.border?.color ?? "#000000"}
-            onCommit={(color) =>
-              edit(node.id, {
-                style: { border: { width: node.style.border?.width ?? 1, color, style: "solid" } },
-              })
-            }
-          />
+          <Tokenized
+            value={node.style.border?.color}
+            tokenType="color"
+            fallback="#000000"
+            testId="border-color"
+            onLiteral={setBorderColor}
+            onToken={(token) => setBorderColor({ token })}
+          >
+            {(value) => <ColorInput value={value} onCommit={setBorderColor} />}
+          </Tokenized>
         </Field>
       )}
     </Section>
@@ -322,6 +456,11 @@ function TextSection({ node }: { node: Node }) {
   const text = node.style.text
   const color = text?.color
 
+  const setFontSize = (fontSize: Bindable<number>) =>
+    edit(node.id, { style: { text: { fontSize } as never } })
+  const setTextColor = (value: Bindable<string>) =>
+    edit(node.id, { style: { text: { color: value } as never } })
+
   return (
     <Section title="Text">
       <Field label="Content">
@@ -329,7 +468,7 @@ function TextSection({ node }: { node: Node }) {
           <BoundValue propId={node.content.bind} nodeId={node.id} field="content" />
         ) : (
           <TextInput
-            value={node.content}
+            value={literalOf(node.content, "")}
             onChange={(event) => edit(node.id, { content: event.target.value })}
           />
         )}
@@ -338,10 +477,16 @@ function TextSection({ node }: { node: Node }) {
       {text && (
         <>
           <Field label="Size">
-            <NumberInput
+            <Tokenized
               value={text.fontSize}
-              onCommit={(fontSize) => edit(node.id, { style: { text: { fontSize } as never } })}
-            />
+              tokenType="fontSize"
+              fallback={16}
+              testId="font-size"
+              onLiteral={setFontSize}
+              onToken={(token) => setFontSize({ token })}
+            >
+              {(value) => <NumberInput value={value} onCommit={setFontSize} />}
+            </Tokenized>
           </Field>
           <Field label="Weight">
             <Select
@@ -368,10 +513,16 @@ function TextSection({ node }: { node: Node }) {
             {isBinding(color) ? (
               <BoundValue propId={color.bind} nodeId={node.id} field="textColor" />
             ) : (
-              <ColorInput
-                value={color ?? "#000000"}
-                onCommit={(value) => edit(node.id, { style: { text: { color: value } as never } })}
-              />
+              <Tokenized
+                value={color}
+                tokenType="color"
+                fallback="#000000"
+                testId="text-color"
+                onLiteral={setTextColor}
+                onToken={(token) => setTextColor({ token })}
+              >
+                {(value) => <ColorInput value={value} onCommit={setTextColor} />}
+              </Tokenized>
             )}
           </Field>
         </>
@@ -438,12 +589,12 @@ function BindingSection({ node }: { node: Node }) {
     return !!node.style.text && isBinding(node.style.text.color)
   }
 
+  // Seeds a new prop with what the field currently shows. A field driven by a
+  // token or another prop has no literal, so the prop starts from its default.
   const currentValue = (field: BindableField): string => {
-    if (field === "content" && node.type === "text" && !isBinding(node.content)) return node.content
-    if (field === "fill" && !isBinding(node.style.fill)) return node.style.fill ?? "#000000"
-    if (field === "textColor" && node.style.text && !isBinding(node.style.text.color)) {
-      return node.style.text.color
-    }
+    if (field === "content" && node.type === "text") return literalOf(node.content, "")
+    if (field === "fill") return literalOf(node.style.fill, "#000000")
+    if (field === "textColor" && node.style.text) return literalOf(node.style.text.color, "#000000")
     return ""
   }
 

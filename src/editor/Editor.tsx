@@ -17,6 +17,7 @@ import { HistoryPanel } from "@/editor/panels/HistoryPanel"
 import { LayerTree } from "@/editor/panels/LayerTree"
 import { PropertiesPanel } from "@/editor/panels/PropertiesPanel"
 import { SpecPanel } from "@/editor/panels/SpecPanel"
+import { TokensPanel } from "@/editor/panels/TokensPanel"
 import { VariantBar } from "@/editor/panels/VariantBar"
 import { Button } from "@/editor/panels/controls"
 import { useEditor, type Tool } from "@/editor/store"
@@ -62,8 +63,8 @@ export function Editor({ componentId, initialDoc }: EditorProps) {
       />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="w-72 shrink-0 border-r border-chrome-border bg-chrome-panel">
-          <SpecPanel />
+        <aside className="flex w-72 shrink-0 flex-col border-r border-chrome-border bg-chrome-panel">
+          <LeftRail />
         </aside>
 
         <main className="relative flex min-w-0 flex-1 flex-col">
@@ -87,6 +88,39 @@ export function Editor({ componentId, initialDoc }: EditorProps) {
         </aside>
       </div>
     </div>
+  )
+}
+
+/**
+ * The left rail holds the two things that are about the component as a whole
+ * rather than about the selected layer: its API and its tokens. Tabs rather
+ * than a split, because both lists grow.
+ */
+function LeftRail() {
+  const [tab, setTab] = React.useState<"component" | "tokens">("component")
+
+  return (
+    <>
+      <div className="flex border-b border-chrome-border">
+        {(["component", "tokens"] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            data-testid={`rail-${id}`}
+            onClick={() => setTab(id)}
+            className={`flex-1 px-3 py-2 text-[11px] font-medium uppercase tracking-wide transition ${
+              tab === id
+                ? "border-b border-chrome-accent text-chrome-text"
+                : "text-chrome-muted hover:bg-white/5"
+            }`}
+          >
+            {id}
+          </button>
+        ))}
+      </div>
+
+      <div className="min-h-0 flex-1">{tab === "component" ? <SpecPanel /> : <TokensPanel />}</div>
+    </>
   )
 }
 

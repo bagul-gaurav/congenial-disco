@@ -15,6 +15,8 @@ const BASE_URL = `http://127.0.0.1:${PORT}`
 
 export default defineConfig({
   testDir: "./e2e",
+  // Restores the demo component the editor tests mutate.
+  globalSetup: "./e2e/global-setup.ts",
   fullyParallel: false, // one shared database and one seeded workspace
   workers: 1,
   forbidOnly: !!process.env.CI,

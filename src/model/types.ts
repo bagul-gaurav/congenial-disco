@@ -14,6 +14,38 @@ export type NodeId = string
 export type PropId = string
 export type StateId = string
 export type VariantId = string
+export type TokenId = string
+
+// ---------------------------------------------------------------------------
+// Design tokens
+// ---------------------------------------------------------------------------
+
+/**
+ * What a token can stand for.
+ *
+ * Grouped by role rather than by primitive type: `space` and `radius` are both
+ * numbers, but a spacing scale and a corner scale are different decisions, and
+ * a picker that offers every number for every field is useless.
+ */
+export type TokenType = "color" | "space" | "radius" | "fontSize" | "fontFamily"
+
+export interface Token {
+  id: TokenId
+  /** Free text. Sanitised into an identifier when emitted. */
+  name: string
+  type: TokenType
+  value: string | number
+  description?: string
+}
+
+/** Which token types can drive a given kind of field. */
+export const TOKEN_TYPE_FOR_FIELD = {
+  color: "color",
+  space: "space",
+  radius: "radius",
+  fontSize: "fontSize",
+  fontFamily: "fontFamily",
+} as const
 
 // ---------------------------------------------------------------------------
 // Component API
@@ -77,7 +109,25 @@ export function isBinding(value: unknown): value is Binding {
   return typeof value === "object" && value !== null && "bind" in value
 }
 
-export type Bindable<T> = T | Binding
+/** A value that comes from a design token rather than being written inline. */
+export interface TokenRef {
+  token: TokenId
+}
+
+export function isTokenRef(value: unknown): value is TokenRef {
+  return typeof value === "object" && value !== null && "token" in value
+}
+
+/**
+ * Any leaf value in the model.
+ *
+ * One rule, applied everywhere: a value is either written inline, read from a
+ * prop at runtime, or read from a design token. Widening the leaves rather than
+ * keeping a side-table of "which fields are tokenised" means the three cases
+ * are handled in one place per emitter, and a plain literal stays valid — so
+ * documents saved before tokens existed still load unchanged.
+ */
+export type Bindable<T> = T | Binding | TokenRef
 
 export type SizeValue =
   /** A fixed pixel size. */
@@ -97,17 +147,17 @@ export type StackAlign = "start" | "center" | "end" | "stretch"
 export type StackJustify = "start" | "center" | "end" | "between" | "around"
 
 export interface Padding {
-  top: number
-  right: number
-  bottom: number
-  left: number
+  top: Bindable<number>
+  right: Bindable<number>
+  bottom: Bindable<number>
+  left: Bindable<number>
 }
 
 export type Layout =
   | {
       mode: "stack"
       direction: StackDirection
-      gap: number
+      gap: Bindable<number>
       padding: Padding
       align: StackAlign
       justify: StackJustify
@@ -126,7 +176,7 @@ export interface Position {
 
 export interface Border {
   width: number
-  color: string
+  color: Bindable<string>
   style: "solid" | "dashed" | "dotted"
 }
 
@@ -139,15 +189,15 @@ export interface Shadow {
 }
 
 export interface Corners {
-  topLeft: number
-  topRight: number
-  bottomRight: number
-  bottomLeft: number
+  topLeft: Bindable<number>
+  topRight: Bindable<number>
+  bottomRight: Bindable<number>
+  bottomLeft: Bindable<number>
 }
 
 export interface TextStyle {
-  fontFamily: string
-  fontSize: number
+  fontFamily: Bindable<string>
+  fontSize: Bindable<number>
   fontWeight: number
   lineHeight: number
   letterSpacing: number
@@ -251,6 +301,8 @@ export interface ComponentDoc {
   description: string
   props: PropDef[]
   states: StateDef[]
+  /** Design tokens this component's values can reference. */
+  tokens: Token[]
   /** The base design. Variants store deltas against this. */
   nodes: Record<NodeId, Node>
   root: NodeId

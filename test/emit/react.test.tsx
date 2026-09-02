@@ -2,8 +2,10 @@ import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
 import { Preview, activeVariantIds, propValues } from "@/emit/react"
+import { updateToken } from "@/model/ops"
 
 import { buttonFixture } from "../fixtures/button"
+import { tokenizedFixture } from "../fixtures/tokenized"
 
 describe("Preview", () => {
   it("renders bound text from the prop's default value", () => {
@@ -108,5 +110,40 @@ describe("Preview", () => {
 
     expect(seen).toContain(ids.root)
     expect(seen).toContain(ids.label)
+  })
+
+  it("resolves token references when rendering", () => {
+    const { doc, ids } = tokenizedFixture()
+    const { container } = render(<Preview doc={doc} interactive={false} />)
+    const root = container.querySelector(`[data-node-id="${ids.root}"]`) as HTMLElement
+    const label = container.querySelector(`[data-node-id="${ids.label}"]`) as HTMLElement
+
+    expect(root.style.backgroundColor).toBe("rgb(59, 91, 253)")
+    expect(root.style.gap).toBe("12px")
+    expect(root.style.paddingTop).toBe("12px")
+    expect(root.style.borderTopLeftRadius).toBe("8px")
+    expect(label.style.color).toBe("rgb(255, 255, 255)")
+    expect(label.style.fontSize).toBe("15px")
+  })
+
+  it("follows a token's value when it changes", () => {
+    const { doc, ids } = tokenizedFixture()
+    const edited = updateToken(doc, ids.primary, { value: "#00ff00" })
+
+    const { container } = render(<Preview doc={edited} interactive={false} />)
+    const root = container.querySelector(`[data-node-id="${ids.root}"]`) as HTMLElement
+
+    // Layers point at the token, so one edit moves every layer reading it.
+    expect(root.style.backgroundColor).toBe("rgb(0, 255, 0)")
+  })
+
+  it("drops a property whose token has been deleted rather than rendering undefined", () => {
+    const { doc, ids } = tokenizedFixture()
+    const broken = { ...doc, tokens: doc.tokens.filter((t) => t.id !== ids.primary) }
+
+    const { container } = render(<Preview doc={broken} interactive={false} />)
+    const root = container.querySelector(`[data-node-id="${ids.root}"]`) as HTMLElement
+
+    expect(root.style.backgroundColor).toBe("")
   })
 })

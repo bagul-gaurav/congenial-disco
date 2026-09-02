@@ -12,7 +12,7 @@
 
 import * as React from "react"
 
-import { isBinding } from "@/model/types"
+import { isBinding, isTokenRef } from "@/model/types"
 import type {
   Bindable,
   ComponentDoc,
@@ -23,10 +23,13 @@ import type {
   PropValue,
   ResolvedNode,
   StateTrigger,
+  Token,
 } from "@/model/types"
 import { resolve } from "@/model/resolve"
 
-import { isBindRef, styleFor, type CSSObject } from "./style"
+import { tokenById } from "@/model/values"
+
+import { isBindRef, isTokenValueRef, styleFor, type CSSObject } from "./style"
 
 export type PropValues = Record<PropId, PropValue>
 
@@ -46,23 +49,42 @@ export interface PreviewOptions {
   rootProps?: React.HTMLAttributes<HTMLElement>
 }
 
-/** Resolve `{ __bind }` sentinels against the current prop values. */
-function materialize(style: CSSObject, values: PropValues): React.CSSProperties {
+/**
+ * Resolve the sentinels against live values.
+ *
+ * A reference that no longer resolves — a deleted token, an unset prop — drops
+ * the property rather than writing `undefined` into the DOM, so the layer falls
+ * back to whatever CSS would otherwise apply.
+ */
+function materialize(style: CSSObject, values: PropValues, tokens: Token[]): React.CSSProperties {
   const out: Record<string, string | number> = {}
+
   for (const [key, value] of Object.entries(style)) {
     if (isBindRef(value)) {
       const bound = values[value.__bind]
       if (bound === null || bound === undefined) continue
       out[key] = bound as string | number
+    } else if (isTokenValueRef(value)) {
+      const token = tokenById(tokens, value.__token)
+      if (!token) continue
+      out[key] = token.value
     } else {
       out[key] = value
     }
   }
+
   return out as React.CSSProperties
 }
 
-function readBindable<T extends string>(value: Bindable<T>, values: PropValues, fallback: T): T {
+function readBindable<T extends string>(
+  value: Bindable<T>,
+  values: PropValues,
+  tokens: Token[],
+  fallback: T,
+): T {
+  if (isTokenRef(value)) return (tokenById(tokens, value.token)?.value as T | undefined) ?? fallback
   if (!isBinding(value)) return value
+
   const bound = values[value.bind]
   return (bound === null || bound === undefined ? fallback : bound) as T
 }
@@ -113,13 +135,14 @@ export function activeVariantIds(
 interface RenderContext {
   nodes: Record<NodeId, Node>
   values: PropValues
+  tokens: Token[]
   options: PreviewOptions
 }
 
 function renderNode(ctx: RenderContext, resolved: ResolvedNode, isRoot: boolean): React.ReactNode {
   const node = resolved.node
   const parent = isRoot ? null : parentOf(ctx.nodes, node.id)
-  const style = materialize(styleFor(node, { parent }), ctx.values)
+  const style = materialize(styleFor(node, { parent }), ctx.values, ctx.tokens)
 
   const ref = ctx.options.onNodeRef
     ? (element: HTMLElement | null) => ctx.options.onNodeRef!(node.id, element)
@@ -136,7 +159,7 @@ function renderNode(ctx: RenderContext, resolved: ResolvedNode, isRoot: boolean)
 
   switch (node.type) {
     case "text": {
-      const content = readBindable(node.content, ctx.values, "")
+      const content = readBindable(node.content, ctx.values, ctx.tokens, "")
       return (
         <p key={node.id} {...common} suppressHydrationWarning>
           {content}
@@ -144,7 +167,7 @@ function renderNode(ctx: RenderContext, resolved: ResolvedNode, isRoot: boolean)
       )
     }
     case "image": {
-      const src = readBindable(node.src, ctx.values, "")
+      const src = readBindable(node.src, ctx.values, ctx.tokens, "")
       // An unset image prop would render a broken-image icon; a placeholder box
       // reads as "nothing here yet", which is what it means.
       if (!src) return <div key={node.id} {...common} aria-label={node.alt ?? node.name} />
@@ -209,6 +232,7 @@ export function Preview({ doc, ...options }: PreviewProps): React.ReactElement |
   const ctx: RenderContext = {
     nodes: doc.nodes,
     values,
+    tokens: doc.tokens,
     options: {
       ...options,
       rootProps: { ...interactionHandlers, ...options.rootProps },

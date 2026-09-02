@@ -21,10 +21,17 @@ component:
 | **Base design** | The layer tree: frames with auto-layout, text, shapes, images. |
 | **Variants** | Deltas against the base, selected by a prop value or a state. |
 | **Bindings** | A layer field that reads from a prop instead of a literal. |
+| **Tokens** | Named design decisions — a colour, a spacing step — that values point at. |
 
 Variants store only what they change, so editing the base propagates everywhere
 it was not explicitly overridden, and the exporter emits one JSX tree with
 conditional styles rather than one tree per variant.
+
+Every leaf value follows one rule: it is written inline, read from a prop at
+runtime, or read from a design token. Widening the leaves rather than keeping a
+side-table of "which fields are tokenised" means each emitter handles the three
+cases in one place — and a plain literal stays valid, so documents saved before
+tokens existed load unchanged.
 
 ### One IR, two emitters
 
@@ -85,6 +92,37 @@ docker run --name studio-db -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgr
    untouched.
 5. **Export** (⌘/Ctrl+E), copy, and paste into Framer under
    *Assets → Code → New Component*.
+
+### Design tokens
+
+The **Tokens** tab in the left rail holds them; *Add a starter set* seeds a
+palette, a spacing scale, radii and type sizes. Any fill, text colour, radius,
+gap, padding or font size can then point at one through the small picker beside
+its control — and pickers only offer tokens of a matching type, since a spacing
+scale is not a set of colours.
+
+Editing a token moves every layer reading it. Deleting one inlines the value it
+held everywhere it was used, so a design never silently loses a colour and the
+generated code never references a token that is no longer emitted. *Detach* does
+the same for a single field.
+
+On export the component carries a `tokens` object holding only what it actually
+references — a component using three colours should not import a whole design
+system into Framer:
+
+```tsx
+const tokens = {
+    primary: "#3b5bfd",
+    space3: 12,
+    radiusMd: 8,
+} as const
+```
+
+One wrinkle worth knowing: `padding: "12px 12px"` is a single string built from
+four values, and a string cannot hold a `tokens.x` reference. So when any part
+of a composite is a token the shorthand becomes longhand — `paddingTop`,
+`paddingRight`, and so on. When every part is a literal the shorthand stays, and
+the common case reads the way a person would write it.
 
 ### History and sharing
 
@@ -169,10 +207,14 @@ Five layers, in increasing order of what they prove:
    `framer-motion`, then hovered. This is what proves variant propagation
    actually works rather than merely looking right in the source.
 5. **Browser** — Playwright drives the actual editor: create and undo a layer,
-   edit properties, confirm editing a variant leaves the base alone, restore a
-   version, share and revoke a link, read the export panel. This is the layer
-   that catches what only exists in a browser; its first run found an infinite
-   re-render that meant the editor never mounted at all.
+   edit properties, confirm editing a variant leaves the base alone, point a
+   fill at a token and watch it follow, restore a version, share and revoke a
+   link, read the export panel. This is the layer that catches what only exists
+   in a browser; its first run found an infinite re-render that meant the editor
+   never mounted at all.
+
+   Some of these tests are destructive by nature and the database persists, so a
+   global setup reseeds the demo component before each run.
 
 If a Chromium is already installed (as in most CI images), point Playwright at
 it with `CHROMIUM_PATH` rather than downloading another.
@@ -184,8 +226,8 @@ you get. Share links are unguessable but public, and anyone who can reach the
 app can edit anything in it. Do not deploy this to a public address as it
 stands.
 
-Also absent: vector editing (pen/bezier), design tokens, component nesting and
-slots, and multiplayer. The flat `nodes` record and the pure ops layer are
+Also absent: vector editing (pen/bezier), component nesting and slots, and
+multiplayer. The flat `nodes` record and the pure ops layer are
 shaped for a CRDT, so collaboration is addable without a rewrite.
 
 ## Layout
@@ -193,7 +235,7 @@ shaped for a CRDT, so collaboration is addable without a rewrite.
 ```
 app/                    Next.js App Router — pages and API routes
 app/s/[token]/          the public read-only view of a shared component
-src/model/              document model: types, ops, resolve  (pure, no React)
+src/model/              document model: types, ops, resolve, values  (pure, no React)
 src/emit/               style mapping + the two emitters
 src/editor/             store, canvas, panels
 src/ai/spec.ts          plain-language → proposed component API (OpenRouter)

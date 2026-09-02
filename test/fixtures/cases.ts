@@ -11,6 +11,7 @@ import { addProp, bindField, insertNode, setNodeLayout } from "@/model/ops"
 import type { ComponentDoc } from "@/model/types"
 
 import { buttonFixture } from "./button"
+import { tokenizedFixture } from "./tokenized"
 
 export function generatedCases(): Record<string, ComponentDoc> {
   const empty = createDoc("Empty")
@@ -39,6 +40,9 @@ export function generatedCases(): Record<string, ComponentDoc> {
     // The same document under a second name: the compile pass checks it, and
     // the runtime pass imports this one and renders it.
     RuntimeButton: button,
+    Tokens: tokenizedFixture().doc,
+    // Imported and executed by the runtime pass.
+    RuntimeTokens: tokenizedFixture().doc,
     Empty: empty,
     Absolute: absolute,
     Media: media,

@@ -11,7 +11,7 @@
  * exporter writes the prop's identifier as an expression.
  */
 
-import { isBinding } from "@/model/types"
+import { isBinding, isTokenRef } from "@/model/types"
 import type {
   Bindable,
   Corners,
@@ -24,6 +24,7 @@ import type {
   SizeValue,
   StackAlign,
   StackJustify,
+  TokenId,
 } from "@/model/types"
 
 /** A value that is only known once props are supplied. */
@@ -31,16 +32,34 @@ export interface BindRef {
   __bind: PropId
 }
 
-export type StyleValue = string | number | BindRef
+/** A value that comes from a design token. */
+export interface TokenValueRef {
+  __token: TokenId
+}
+
+export type StyleValue = string | number | BindRef | TokenValueRef
 export type CSSObject = Record<string, StyleValue>
 
 export function isBindRef(value: unknown): value is BindRef {
   return typeof value === "object" && value !== null && "__bind" in value
 }
 
+export function isTokenValueRef(value: unknown): value is TokenValueRef {
+  return typeof value === "object" && value !== null && "__token" in value
+}
+
+/**
+ * Carries references through as sentinels rather than resolving them.
+ *
+ * Both emitters need the reference itself, not its current value: the preview
+ * substitutes live prop values and token values, while the exporter writes a
+ * prop identifier or a `tokens.x` lookup into the source.
+ */
 function bindable<T extends string | number>(value: Bindable<T> | undefined): StyleValue | undefined {
   if (value === undefined) return undefined
-  return isBinding(value) ? { __bind: value.bind } : value
+  if (isBinding(value)) return { __bind: value.bind }
+  if (isTokenRef(value)) return { __token: value.token }
+  return value
 }
 
 // ---------------------------------------------------------------------------
@@ -107,12 +126,54 @@ function sizeStyles(size: Size, parent: FrameNode | null): CSSObject {
 // Decoration
 // ---------------------------------------------------------------------------
 
-function cornerRadius(corners: Corners): string | number {
+/** True when a value is a prop or token reference rather than a literal. */
+function isRef(value: Bindable<string | number> | undefined): boolean {
+  return isBinding(value) || isTokenRef(value)
+}
+
+/**
+ * Composite CSS values are the one place references need care.
+ *
+ * `padding: "10px 18px"` is a single string built from four values, and a
+ * string cannot carry a sentinel — so when any part is a reference the
+ * shorthand is replaced by longhand properties, each able to hold its own
+ * `tokens.x`. When every part is a literal the shorthand stays, which keeps the
+ * common case reading the way a person would write it.
+ */
+function cornerRadiusStyles(corners: Corners): CSSObject {
   const { topLeft, topRight, bottomRight, bottomLeft } = corners
-  if (topLeft === topRight && topRight === bottomRight && bottomRight === bottomLeft) {
-    return topLeft
+  const sides = [topLeft, topRight, bottomRight, bottomLeft]
+
+  if (sides.some(isRef)) {
+    return {
+      borderTopLeftRadius: bindable(topLeft)!,
+      borderTopRightRadius: bindable(topRight)!,
+      borderBottomRightRadius: bindable(bottomRight)!,
+      borderBottomLeftRadius: bindable(bottomLeft)!,
+    }
   }
-  return `${topLeft}px ${topRight}px ${bottomRight}px ${bottomLeft}px`
+
+  const [tl, tr, br, bl] = sides as number[]
+  if (tl === tr && tr === br && br === bl) return tl === 0 ? {} : { borderRadius: tl }
+  return { borderRadius: `${tl}px ${tr}px ${br}px ${bl}px` }
+}
+
+function paddingStyles(padding: Layout["padding"]): CSSObject {
+  const { top, right, bottom, left } = padding
+  const sides = [top, right, bottom, left]
+
+  if (sides.some(isRef)) {
+    return {
+      paddingTop: bindable(top)!,
+      paddingRight: bindable(right)!,
+      paddingBottom: bindable(bottom)!,
+      paddingLeft: bindable(left)!,
+    }
+  }
+
+  const [t, r, b, l] = sides as number[]
+  if (!t && !r && !b && !l) return {}
+  return { padding: `${t}px ${r}px ${b}px ${l}px` }
 }
 
 function decorationStyles(style: NodeStyle): CSSObject {
@@ -122,12 +183,17 @@ function decorationStyles(style: NodeStyle): CSSObject {
   if (fill !== undefined) out.backgroundColor = fill
 
   if (style.opacity !== undefined && style.opacity !== 1) out.opacity = style.opacity
-  if (style.corners) {
-    const radius = cornerRadius(style.corners)
-    if (radius !== 0) out.borderRadius = radius
-  }
+  if (style.corners) Object.assign(out, cornerRadiusStyles(style.corners))
+
   if (style.border && style.border.width > 0) {
-    out.border = `${style.border.width}px ${style.border.style} ${style.border.color}`
+    const { width, style: lineStyle, color } = style.border
+    if (isRef(color)) {
+      out.borderWidth = width
+      out.borderStyle = lineStyle
+      out.borderColor = bindable(color)!
+    } else {
+      out.border = `${width}px ${lineStyle} ${color}`
+    }
   }
   if (style.shadows && style.shadows.length > 0) {
     out.boxShadow = style.shadows
@@ -144,8 +210,8 @@ function textStyles(style: NodeStyle): CSSObject {
   if (!text) return {}
 
   const out: CSSObject = {
-    fontFamily: text.fontFamily,
-    fontSize: text.fontSize,
+    fontFamily: bindable(text.fontFamily)!,
+    fontSize: bindable(text.fontSize)!,
     fontWeight: text.fontWeight,
     lineHeight: text.lineHeight,
     textAlign: text.textAlign,
@@ -159,12 +225,7 @@ function textStyles(style: NodeStyle): CSSObject {
 }
 
 function layoutStyles(layout: Layout): CSSObject {
-  const { padding } = layout
-  const out: CSSObject = {}
-
-  if (padding.top || padding.right || padding.bottom || padding.left) {
-    out.padding = `${padding.top}px ${padding.right}px ${padding.bottom}px ${padding.left}px`
-  }
+  const out: CSSObject = { ...paddingStyles(layout.padding) }
 
   if (layout.mode === "absolute") {
     // Children of an absolute frame are positioned against it.
@@ -176,7 +237,7 @@ function layoutStyles(layout: Layout): CSSObject {
   out.flexDirection = layout.direction
   out.alignItems = ALIGN[layout.align]
   out.justifyContent = JUSTIFY[layout.justify]
-  if (layout.gap !== 0) out.gap = layout.gap
+  if (layout.gap !== 0) out.gap = bindable(layout.gap)!
   if (layout.wrap) out.flexWrap = "wrap"
 
   return out

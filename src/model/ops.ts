@@ -11,8 +11,11 @@
  */
 
 import { toIdentifier, uniqueIdentifier } from "./identifiers"
+import { tokenById } from "./values"
 import {
   isBinding,
+  isTokenRef,
+  type Bindable,
   type Binding,
   type ComponentDoc,
   type FrameNode,
@@ -26,6 +29,8 @@ import {
   type Size,
   type StateDef,
   type StateId,
+  type Token,
+  type TokenId,
   type Variant,
   type VariantId,
 } from "./types"
@@ -224,7 +229,7 @@ export function setNodeHidden(doc: ComponentDoc, id: NodeId, hidden: boolean): C
 export function setTextContent(
   doc: ComponentDoc,
   id: NodeId,
-  content: string | Binding,
+  content: Bindable<string>,
 ): ComponentDoc {
   const node = doc.nodes[id]
   if (node?.type !== "text") return doc
@@ -480,6 +485,122 @@ export function clearOverride(
       return { ...variant, overrides }
     }),
   }
+}
+
+// ---------------------------------------------------------------------------
+// Design tokens
+// ---------------------------------------------------------------------------
+
+export function addToken(doc: ComponentDoc, token: Token): ComponentDoc {
+  return { ...doc, tokens: [...doc.tokens, token] }
+}
+
+export function addTokens(doc: ComponentDoc, tokens: Token[]): ComponentDoc {
+  // Skips names already present, so adding the starter set to a document that
+  // already has a "Primary" does not produce two of them.
+  const taken = new Set(doc.tokens.map((t) => `${t.type}:${t.name.toLowerCase()}`))
+  const fresh = tokens.filter((t) => !taken.has(`${t.type}:${t.name.toLowerCase()}`))
+  return { ...doc, tokens: [...doc.tokens, ...fresh] }
+}
+
+export function updateToken(
+  doc: ComponentDoc,
+  id: TokenId,
+  patch: Partial<Token>,
+): ComponentDoc {
+  return {
+    ...doc,
+    tokens: doc.tokens.map((token) => (token.id === id ? { ...token, ...patch } : token)),
+  }
+}
+
+/**
+ * Deletes a token, replacing every reference to it with the value it held.
+ *
+ * Leaving dangling references would mean a design that silently loses a colour,
+ * and generated code referring to a token that is no longer emitted.
+ */
+export function removeToken(doc: ComponentDoc, id: TokenId): ComponentDoc {
+  const token = tokenById(doc.tokens, id)
+  if (!token) return doc
+
+  const inline = <T,>(value: T): T =>
+    isTokenRef(value) && value.token === id ? (token.value as unknown as T) : value
+
+  const rewriteStyle = (style: NodeStyle): NodeStyle => {
+    const next: NodeStyle = { ...style }
+    if (next.fill !== undefined) next.fill = inline(next.fill)
+    if (next.corners) {
+      next.corners = {
+        topLeft: inline(next.corners.topLeft),
+        topRight: inline(next.corners.topRight),
+        bottomRight: inline(next.corners.bottomRight),
+        bottomLeft: inline(next.corners.bottomLeft),
+      }
+    }
+    if (next.border) next.border = { ...next.border, color: inline(next.border.color) }
+    if (next.text) {
+      next.text = {
+        ...next.text,
+        color: inline(next.text.color),
+        fontSize: inline(next.text.fontSize),
+        fontFamily: inline(next.text.fontFamily),
+      }
+    }
+    return next
+  }
+
+  const rewriteLayout = (layout: FrameNode["layout"]): FrameNode["layout"] => {
+    const padding = {
+      top: inline(layout.padding.top),
+      right: inline(layout.padding.right),
+      bottom: inline(layout.padding.bottom),
+      left: inline(layout.padding.left),
+    }
+    return layout.mode === "stack"
+      ? { ...layout, padding, gap: inline(layout.gap) }
+      : { ...layout, padding }
+  }
+
+  const nodes: Record<NodeId, Node> = {}
+  for (const [nodeId, node] of Object.entries(doc.nodes)) {
+    const next: Node = { ...node, style: rewriteStyle(node.style) }
+    nodes[nodeId] = isFrame(next) ? { ...next, layout: rewriteLayout(next.layout) } : next
+  }
+
+  const variants = doc.variants.map((variant) => ({
+    ...variant,
+    overrides: Object.fromEntries(
+      Object.entries(variant.overrides).map(([nodeId, override]) => [
+        nodeId,
+        override.style ? { ...override, style: rewriteStyle(override.style) } : override,
+      ]),
+    ),
+  }))
+
+  return { ...doc, tokens: doc.tokens.filter((t) => t.id !== id), nodes, variants }
+}
+
+/** Nodes that read from a token, for "what changes if I edit this". */
+export function nodesUsingToken(doc: ComponentDoc, id: TokenId): NodeId[] {
+  const reads = (value: unknown) => isTokenRef(value) && value.token === id
+
+  return Object.values(doc.nodes)
+    .filter((node) => {
+      const { style } = node
+      if (reads(style.fill)) return true
+      if (style.corners && Object.values(style.corners).some(reads)) return true
+      if (style.border && reads(style.border.color)) return true
+      if (style.text && (reads(style.text.color) || reads(style.text.fontSize) || reads(style.text.fontFamily))) {
+        return true
+      }
+      if (isFrame(node)) {
+        if (Object.values(node.layout.padding).some(reads)) return true
+        if (node.layout.mode === "stack" && reads(node.layout.gap)) return true
+      }
+      return false
+    })
+    .map((node) => node.id)
 }
 
 // ---------------------------------------------------------------------------

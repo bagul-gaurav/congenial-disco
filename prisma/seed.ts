@@ -74,6 +74,7 @@ function demoButton(): ComponentDoc {
     description: "A button with a tone, a disabled flag and real hover feedback.",
     props: [],
     states: [],
+    tokens: [],
     nodes: { [root.id]: root },
     root: root.id,
     variants: [],
