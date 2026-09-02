@@ -39,6 +39,10 @@ model Component {
   // lets loaders migrate older documents forward.
   doc        Json
   docVersion Int      @default(1)
+  // Bumped on every write. A save carries the revision it was based on, so a
+  // second tab holding a stale document is refused rather than silently
+  // overwriting the newer one.
+  revision   Int      @default(0)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

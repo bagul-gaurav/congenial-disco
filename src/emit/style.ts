@@ -18,6 +18,7 @@ import type {
   FrameNode,
   Layout,
   Node,
+  NodeId,
   NodeStyle,
   PropId,
   Size,
@@ -39,6 +40,25 @@ export interface TokenValueRef {
 
 export type StyleValue = string | number | BindRef | TokenValueRef
 export type CSSObject = Record<string, StyleValue>
+
+/**
+ * `nodeId → parent frame`, built once for a document.
+ *
+ * `styleFor` needs a node's parent to decide how its size maps to CSS, and the
+ * obvious spelling — scan every node looking for one whose children include
+ * this id — is a full pass per node, so styling a tree is quadratic in its
+ * size. Cheap at eight layers and the first thing to hurt once frames nest.
+ */
+export function parentIndex(nodes: Record<NodeId, Node>): Record<NodeId, FrameNode> {
+  const parents: Record<NodeId, FrameNode> = {}
+
+  for (const node of Object.values(nodes)) {
+    if (node.type !== "frame") continue
+    for (const childId of node.children) parents[childId] = node
+  }
+
+  return parents
+}
 
 export function isBindRef(value: unknown): value is BindRef {
   return typeof value === "object" && value !== null && "__bind" in value

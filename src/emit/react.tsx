@@ -29,7 +29,7 @@ import { resolve } from "@/model/resolve"
 
 import { tokenById } from "@/model/values"
 
-import { isBindRef, isTokenValueRef, styleFor, type CSSObject } from "./style"
+import { isBindRef, isTokenValueRef, parentIndex, styleFor, type CSSObject } from "./style"
 
 export type PropValues = Record<PropId, PropValue>
 
@@ -89,13 +89,6 @@ function readBindable<T extends string>(
   return (bound === null || bound === undefined ? fallback : bound) as T
 }
 
-function parentOf(nodes: Record<NodeId, Node>, nodeId: NodeId): FrameNode | null {
-  for (const node of Object.values(nodes)) {
-    if (node.type === "frame" && node.children.includes(nodeId)) return node
-  }
-  return null
-}
-
 /** Prop defaults, overlaid with whatever the caller supplied. */
 export function propValues(doc: ComponentDoc, overrides: PropValues = {}): PropValues {
   const out: PropValues = {}
@@ -134,6 +127,8 @@ export function activeVariantIds(
 
 interface RenderContext {
   nodes: Record<NodeId, Node>
+  /** Built once per render rather than scanned per node. */
+  parents: Record<NodeId, FrameNode>
   values: PropValues
   tokens: Token[]
   options: PreviewOptions
@@ -141,7 +136,7 @@ interface RenderContext {
 
 function renderNode(ctx: RenderContext, resolved: ResolvedNode, isRoot: boolean): React.ReactNode {
   const node = resolved.node
-  const parent = isRoot ? null : parentOf(ctx.nodes, node.id)
+  const parent = isRoot ? null : (ctx.parents[node.id] ?? null)
   const style = materialize(styleFor(node, { parent }), ctx.values, ctx.tokens)
 
   const ref = ctx.options.onNodeRef
@@ -171,6 +166,10 @@ function renderNode(ctx: RenderContext, resolved: ResolvedNode, isRoot: boolean)
       // An unset image prop would render a broken-image icon; a placeholder box
       // reads as "nothing here yet", which is what it means.
       if (!src) return <div key={node.id} {...common} aria-label={node.alt ?? node.name} />
+      // Not `next/image`: this is the user's design being previewed, at a size
+      // and source the document decides, and the exported component renders a
+      // plain `<img>` too. Optimising here would make the preview lie.
+      // eslint-disable-next-line @next/next/no-img-element
       return <img key={node.id} {...common} src={src} alt={node.alt ?? node.name} />
     }
     case "shape":
@@ -194,6 +193,8 @@ export interface PreviewProps extends PreviewOptions {
  */
 export function Preview({ doc, ...options }: PreviewProps): React.ReactElement | null {
   const values = React.useMemo(() => propValues(doc, options.values), [doc, options.values])
+
+  const parents = React.useMemo(() => parentIndex(doc.nodes), [doc.nodes])
 
   const [hovered, setHovered] = React.useState(false)
   const [pressed, setPressed] = React.useState(false)
@@ -231,6 +232,7 @@ export function Preview({ doc, ...options }: PreviewProps): React.ReactElement |
 
   const ctx: RenderContext = {
     nodes: doc.nodes,
+    parents,
     values,
     tokens: doc.tokens,
     options: {

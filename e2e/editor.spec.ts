@@ -164,6 +164,33 @@ test.describe("persistence", () => {
     await expect.poll(() => rootBackground(page)).toBe("rgb(101, 67, 33)")
   })
 
+  test("refuses to overwrite a document that changed somewhere else", async ({ page, request }) => {
+    await createComponent(page, `Conflict ${Date.now()}`)
+    const id = page.url().split("/c/")[1]
+
+    // Stand in for a second tab: write to the component this editor is holding.
+    const loaded = (await (await request.get(`/api/components/${id}`)).json()) as {
+      doc: Record<string, unknown>
+      revision: number
+    }
+    const elsewhere = await request.put(`/api/components/${id}`, {
+      data: { doc: { ...loaded.doc, description: "written elsewhere" }, revision: loaded.revision },
+    })
+    expect(elsewhere.status()).toBe(200)
+
+    // Now edit here. The save is based on a revision the server has moved past,
+    // so it must be refused rather than quietly winning.
+    await selectLayer(page, "Root")
+    await page.getByTestId("fill-input").fill("#010203")
+
+    await expect(page.getByText("Edited elsewhere — reload")).toBeVisible({ timeout: 15_000 })
+
+    const stored = (await (await request.get(`/api/components/${id}`)).json()) as {
+      doc: { description: string }
+    }
+    expect(stored.doc.description).toBe("written elsewhere")
+  })
+
   test("lists a newly created component on the projects page", async ({ page }) => {
     // Unique per run: the database persists between runs, and a repeated name
     // would match several rows.

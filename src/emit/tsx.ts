@@ -41,7 +41,14 @@ import type {
 } from "@/model/types"
 import { resolve, variantsAffecting } from "@/model/resolve"
 
-import { isBindRef, isTokenValueRef, styleFor, variantStyleFor, type CSSObject } from "./style"
+import {
+  isBindRef,
+  isTokenValueRef,
+  parentIndex,
+  styleFor,
+  variantStyleFor,
+  type CSSObject,
+} from "./style"
 import { emitPropertyControls } from "./controls"
 
 const INDENT = "    " // Framer's code editor uses four spaces.
@@ -261,14 +268,8 @@ interface EmitContext {
   triggers: Set<PointerTrigger>
   /** Collected `const x = {...}` lines, emitted before the return statement. */
   declarations: string[]
-}
-
-function parentOfResolved(tree: ResolvedTree, nodeId: NodeId): FrameNode | null {
-  for (const resolved of Object.values(tree.byId)) {
-    const node = resolved.node
-    if (node.type === "frame" && node.children.includes(nodeId)) return node
-  }
-  return null
+  /** `nodeId → parent frame`, built once. See `parentIndex`. */
+  parents: Record<NodeId, FrameNode>
 }
 
 /** The pointer trigger a variant is driven by, or null if it is not one. */
@@ -418,7 +419,7 @@ function isRendered(resolved: ResolvedNode): boolean {
 function emitNode(ctx: EmitContext, resolved: ResolvedNode, depth: number, isRoot = false): string {
   const node = resolved.node
   const nodeId = node.id
-  const parent = isRoot ? null : parentOfResolved(ctx.tree, nodeId)
+  const parent = isRoot ? null : (ctx.parents[nodeId] ?? null)
 
   // The `React.CSSProperties` annotation is not decoration: without it a value
   // like `flexDirection: "row"` widens to `string` and fails to satisfy React's
@@ -633,6 +634,7 @@ export function emitComponent(doc: ComponentDoc): EmitResult {
     disabledProp,
     triggers,
     declarations: [],
+    parents: parentIndex(doc.nodes),
   }
 
   // `use` is attached here rather than in buildNames so the recorder and the

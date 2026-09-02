@@ -17,6 +17,15 @@ import { z } from "zod"
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.5"
 
+/**
+ * How long to wait for a proposal before giving up.
+ *
+ * Without a deadline a stalled upstream holds the request — and the serverless
+ * invocation behind it — until the platform's own timeout, which is both longer
+ * than anyone will wait and billed the whole time.
+ */
+export const REQUEST_TIMEOUT_MS = 30_000
+
 export const PROP_TYPES = [
   "text",
   "number",
@@ -115,13 +124,23 @@ Rules:
 - Keep it minimal. Six props is a lot. Do not invent styling props such as
   padding or fontSize: those are designed on the canvas, not passed in.`
 
+export class SpecTimeoutError extends Error {
+  constructor(timeoutMs: number = REQUEST_TIMEOUT_MS) {
+    super(`No response from OpenRouter within ${Math.round(timeoutMs / 1000)}s`)
+    this.name = "SpecTimeoutError"
+  }
+}
+
 export interface GenerateOptions {
   description: string
   apiKey: string
   model?: string
   siteUrl?: string
   siteName?: string
+  /** Caller's own cancellation, combined with the deadline above. */
   signal?: AbortSignal
+  /** Overrides `REQUEST_TIMEOUT_MS`. Exists so the deadline is testable. */
+  timeoutMs?: number
 }
 
 export async function generateSpec(options: GenerateOptions): Promise<Spec> {
@@ -133,26 +152,45 @@ export async function generateSpec(options: GenerateOptions): Promise<Spec> {
   if (options.siteUrl) headers["HTTP-Referer"] = options.siteUrl
   if (options.siteName) headers["X-Title"] = options.siteName
 
-  const response = await fetch(ENDPOINT, {
-    method: "POST",
-    headers,
-    signal: options.signal,
-    body: JSON.stringify({
-      model: options.model ?? DEFAULT_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: options.description },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "component_spec", strict: true, schema: RESPONSE_SCHEMA },
-      },
-    }),
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS
+  // Built by hand rather than with `AbortSignal.any`, which is missing from
+  // some of the environments this module is exercised in.
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
+  options.signal?.addEventListener("abort", () => controller.abort(), { once: true })
+
+  const body = JSON.stringify({
+    model: options.model ?? DEFAULT_MODEL,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: options.description },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "component_spec", strict: true, schema: RESPONSE_SCHEMA },
+    },
   })
 
+  let response: Response
+  try {
+    response = await fetch(ENDPOINT, { method: "POST", headers, signal: controller.signal, body })
+  } catch (cause) {
+    // An abort from our own deadline reads as a plain "fetch failed" otherwise.
+    if (timedOut) throw new SpecTimeoutError(timeoutMs)
+    throw cause
+  } finally {
+    // The deadline covers reaching the provider; once the response is in hand
+    // the timer would only keep the event loop alive.
+    clearTimeout(timer)
+  }
+
   if (!response.ok) {
-    const body = await response.text()
-    throw new Error(`OpenRouter request failed (${response.status}): ${body.slice(0, 500)}`)
+    const text = await response.text()
+    throw new Error(`OpenRouter request failed (${response.status}): ${text.slice(0, 500)}`)
   }
 
   const payload = (await response.json()) as {
