@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server"
 
-import { validate } from "@/model/ops"
 import type { ComponentDoc } from "@/model/types"
 import { prisma } from "@/server/db"
+import {
+  DocumentInvalidError,
+  deleteComponent,
+  renameComponent,
+  saveComponent,
+} from "@/server/components"
 
 interface Params {
   params: Promise<{ id: string }>
@@ -31,27 +36,34 @@ export async function PUT(request: Request, { params }: Params) {
     return NextResponse.json({ error: "Missing document" }, { status: 400 })
   }
 
-  // Refuse to persist a structurally broken document: a bad write here would
-  // make the component un-openable on the next load.
-  const issues = validate(doc)
-  if (issues.length > 0) {
-    return NextResponse.json(
-      { error: "Document failed validation", issues: issues.map((i) => i.message) },
-      { status: 422 },
-    )
+  try {
+    const updated = await saveComponent(id, doc)
+    if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 })
+    return NextResponse.json(updated)
+  } catch (error) {
+    // A structurally broken document would make the component un-openable on
+    // its next load, so it is refused rather than stored.
+    if (error instanceof DocumentInvalidError) {
+      return NextResponse.json({ error: error.message, issues: error.issues }, { status: 422 })
+    }
+    throw error
   }
+}
 
-  const updated = await prisma.component.update({
-    where: { id },
-    data: { doc: doc as never, name: doc.name, docVersion: doc.version },
-    select: { id: true, updatedAt: true },
-  })
+export async function PATCH(request: Request, { params }: Params) {
+  const { id } = await params
 
-  return NextResponse.json(updated)
+  const body = (await request.json().catch(() => ({}))) as { name?: string }
+  const name = body.name?.trim()
+  if (!name) return NextResponse.json({ error: "A name is required" }, { status: 400 })
+
+  const renamed = await renameComponent(id, name)
+  if (!renamed) return NextResponse.json({ error: "Not found" }, { status: 404 })
+  return NextResponse.json(renamed)
 }
 
 export async function DELETE(_request: Request, { params }: Params) {
   const { id } = await params
-  await prisma.component.delete({ where: { id } })
+  await deleteComponent(id)
   return NextResponse.json({ ok: true })
 }

@@ -482,7 +482,11 @@ function BindingSection({ node }: { node: Node }) {
         return (
           <div key={field} className="flex items-center gap-2 py-1">
             <span className="w-20 shrink-0 text-xs text-chrome-muted">{FIELD_LABEL[field]}</span>
-            <Button className="flex-1" onClick={() => expose(field)}>
+            <Button
+              className="flex-1"
+              data-testid={`expose-${field}`}
+              onClick={() => expose(field)}
+            >
               New prop
             </Button>
             {compatible.length > 0 && (

@@ -86,6 +86,27 @@ docker run --name studio-db -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgr
 5. **Export** (⌘/Ctrl+E), copy, and paste into Framer under
    *Assets → Code → New Component*.
 
+### History and sharing
+
+*History* in the toolbar covers both.
+
+**Versions** are snapshotted automatically as you save, throttled server-side so
+a long editing session leaves a readable history rather than one entry per
+keystroke; *Save a version* records a labelled point on demand. Restoring
+snapshots the current document first, so a restore is itself undoable — it is
+never the one action that loses work.
+
+**Share links** hand someone a read-only page: the component running, controls
+for its props and states, and the generated code to copy. The URL carries a
+32-hex-character token from a CSPRNG, and possession of it is the whole
+authorisation — so the page is marked `noindex`, revoking clears the token and
+breaks the link immediately, and a revoked token 404s exactly like one that
+never existed.
+
+Both *Save a version* and *Create link* flush pending edits first. Autosave is
+debounced, so without that you could snapshot or share a document older than the
+one on your screen.
+
 ## Generated output
 
 For a button with a bound label, a `tone` enum, a disabled flag and hover/press
@@ -131,11 +152,12 @@ Three details in there are load-bearing:
 ## Testing
 
 ```bash
-npm test         # unit, golden-file, compile and runtime passes
+npm test          # unit, golden-file, compile and runtime passes — no services needed
 npm run typecheck
+npm run test:e2e  # browser tests; needs Postgres (E2E_DATABASE_URL or DATABASE_URL)
 ```
 
-Four layers, in increasing order of what they prove:
+Five layers, in increasing order of what they prove:
 
 1. **Unit** — override folding in `resolve`, structural invariants in `ops`.
 2. **Golden file** — a committed snapshot of the emitted button, so any codegen
@@ -146,22 +168,37 @@ Four layers, in increasing order of what they prove:
 4. **Runtime** — a generated component is imported and rendered against the real
    `framer-motion`, then hovered. This is what proves variant propagation
    actually works rather than merely looking right in the source.
+5. **Browser** — Playwright drives the actual editor: create and undo a layer,
+   edit properties, confirm editing a variant leaves the base alone, restore a
+   version, share and revoke a link, read the export panel. This is the layer
+   that catches what only exists in a browser; its first run found an infinite
+   re-render that meant the editor never mounted at all.
+
+If a Chromium is already installed (as in most CI images), point Playwright at
+it with `CHROMIUM_PATH` rather than downloading another.
 
 ## Not built yet
 
-Vector editing (pen/bezier), design tokens, component nesting and slots, auth,
-sharing links, version history, and multiplayer. The flat `nodes` record and the
-pure ops layer are shaped for a CRDT, so collaboration is addable without a
-rewrite.
+**Authentication.** There is no login: `DEV_USER_EMAIL` decides whose workspace
+you get. Share links are unguessable but public, and anyone who can reach the
+app can edit anything in it. Do not deploy this to a public address as it
+stands.
+
+Also absent: vector editing (pen/bezier), design tokens, component nesting and
+slots, and multiplayer. The flat `nodes` record and the pure ops layer are
+shaped for a CRDT, so collaboration is addable without a rewrite.
 
 ## Layout
 
 ```
 app/                    Next.js App Router — pages and API routes
+app/s/[token]/          the public read-only view of a shared component
 src/model/              document model: types, ops, resolve  (pure, no React)
 src/emit/               style mapping + the two emitters
 src/editor/             store, canvas, panels
 src/ai/spec.ts          plain-language → proposed component API (OpenRouter)
-src/server/db.ts        Prisma client
+src/server/             Prisma client, and component operations shared by the
+                        API routes and the projects page's server actions
 test/                   unit, golden, compile and runtime passes
+e2e/                    Playwright browser tests
 ```

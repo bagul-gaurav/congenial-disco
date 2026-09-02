@@ -13,6 +13,7 @@ import * as React from "react"
 
 import { Canvas } from "@/editor/canvas/Canvas"
 import { ExportPanel } from "@/editor/panels/ExportPanel"
+import { HistoryPanel } from "@/editor/panels/HistoryPanel"
 import { LayerTree } from "@/editor/panels/LayerTree"
 import { PropertiesPanel } from "@/editor/panels/PropertiesPanel"
 import { SpecPanel } from "@/editor/panels/SpecPanel"
@@ -39,7 +40,9 @@ export interface EditorProps {
 
 export function Editor({ componentId, initialDoc }: EditorProps) {
   const replaceDoc = useEditor((s) => s.replaceDoc)
-  const [showExport, setShowExport] = React.useState(false)
+  // Export and history are both full-surface overlays, so only one is open at
+  // a time rather than each carrying its own boolean.
+  const [overlay, setOverlay] = React.useState<"export" | "history" | null>(null)
 
   // Load the document once, without leaving an undo step that would let the
   // user "undo" back to a blank starter document.
@@ -48,11 +51,15 @@ export function Editor({ componentId, initialDoc }: EditorProps) {
   }, [initialDoc, replaceDoc])
 
   const status = useAutosave(componentId)
-  useKeyboardShortcuts({ onExport: () => setShowExport(true) })
+  useKeyboardShortcuts({ onExport: () => setOverlay("export") })
 
   return (
     <div className="flex h-screen flex-col bg-chrome-bg text-chrome-text">
-      <Toolbar status={status} onExport={() => setShowExport(true)} />
+      <Toolbar
+        status={status}
+        onExport={() => setOverlay("export")}
+        onHistory={() => setOverlay("history")}
+      />
 
       <div className="flex min-h-0 flex-1">
         <aside className="w-72 shrink-0 border-r border-chrome-border bg-chrome-panel">
@@ -64,7 +71,10 @@ export function Editor({ componentId, initialDoc }: EditorProps) {
           <div className="min-h-0 flex-1">
             <Canvas />
           </div>
-          {showExport && <ExportPanel onClose={() => setShowExport(false)} />}
+          {overlay === "export" && <ExportPanel onClose={() => setOverlay(null)} />}
+          {overlay === "history" && (
+            <HistoryPanel componentId={componentId} onClose={() => setOverlay(null)} />
+          )}
         </main>
 
         <aside className="flex w-72 shrink-0 flex-col border-l border-chrome-border bg-chrome-panel">
@@ -80,7 +90,15 @@ export function Editor({ componentId, initialDoc }: EditorProps) {
   )
 }
 
-function Toolbar({ status, onExport }: { status: string; onExport: () => void }) {
+function Toolbar({
+  status,
+  onExport,
+  onHistory,
+}: {
+  status: string
+  onExport: () => void
+  onHistory: () => void
+}) {
   const tool = useEditor((s) => s.tool)
   const setTool = useEditor((s) => s.setTool)
   const undo = useEditor((s) => s.undo)
@@ -120,6 +138,9 @@ function Toolbar({ status, onExport }: { status: string; onExport: () => void })
       <div className="flex-1" />
 
       <span className="text-xs text-chrome-muted">{status}</span>
+      <Button data-testid="history-open" onClick={onHistory}>
+        History
+      </Button>
       <Button variant="accent" data-testid="export-open" onClick={onExport}>
         Export to Framer
       </Button>

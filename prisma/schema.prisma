@@ -42,5 +42,31 @@ model Component {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  // Unguessable token for read-only sharing. Null means not shared; revoking
+  // clears it, so an old link stops working immediately.
+  shareToken String?  @unique
+
+  versions ComponentVersion[]
+
   @@index([projectId])
+}
+
+// A point-in-time snapshot of a component's document.
+//
+// Snapshots are throttled rather than written on every autosave: a session of
+// dragging a slider should leave one entry in the history, not two hundred.
+model ComponentVersion {
+  id          String    @id @default(cuid())
+  componentId String
+  component   Component @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  doc         Json
+  // What the component was called when this snapshot was taken, so the history
+  // still reads correctly after a rename.
+  name        String
+  // Set when a user explicitly saved this point, rather than it being an
+  // automatic snapshot.
+  label       String?
+  createdAt   DateTime  @default(now())
+
+  @@index([componentId, createdAt])
 }
