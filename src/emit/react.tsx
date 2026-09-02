@@ -94,13 +94,13 @@ export function activeVariantIds(
   const forced = new Set(forcedStates)
 
   return doc.variants
-    .filter((variant) => {
-      if (variant.selector.kind === "prop") {
-        const value = values[variant.selector.propId]
-        if (typeof value === "boolean") return String(value) === variant.selector.value
-        return String(value ?? "") === variant.selector.value
+    .filter(({ selector }) => {
+      if (selector.kind === "prop") {
+        const value = values[selector.propId]
+        if (typeof value === "boolean") return String(value) === selector.value
+        return String(value ?? "") === selector.value
       }
-      const state = doc.states.find((s) => s.id === variant.selector.stateId)
+      const state = doc.states.find((s) => s.id === selector.stateId)
       if (!state) return false
       if (state.trigger === "disabled") {
         return state.propId ? values[state.propId] === true : false

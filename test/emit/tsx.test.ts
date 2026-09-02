@@ -72,10 +72,18 @@ describe("emitComponent", () => {
 
     // Without a `rest` entry naming each animated property, framer-motion has
     // nothing to animate back to and the layer sticks on the hover value.
-    // The arrow rests hidden; hover reveals it.
-    expect(code).toMatch(/const arrowMotion = \{\s*\n\s*rest: \{\s*\n\s*display: "none",/)
-    // `scale` is absent from the base style, so the resting value is synthesised.
-    expect(code).toMatch(/const rootMotion = \{[\s\S]*?rest: \{[\s\S]*?scale: 1,/)
+    expect(code).toContain(`display: arrowStyle.display ?? "none",`)
+    // `scale` is absent from the base style, so a resting value is synthesised.
+    expect(code).toContain("scale: rootStyle.scale ?? 1,")
+  })
+
+  it("rests on the composed style, not the base style", () => {
+    const { code } = emitComponent(buttonFixture().doc)
+
+    // Reading the base here would make a ghost button animate back to the
+    // primary fill on pointer-out — a resting value it is not wearing.
+    expect(code).toContain(`backgroundColor: rootStyle.backgroundColor ?? "#3b5bfd",`)
+    expect(code).toMatch(/const rootStyle: React\.CSSProperties = \{\s*\n\s*\.\.\.rootBase,/)
   })
 
   it("emits a prop-driven variant as a conditional style spread", () => {

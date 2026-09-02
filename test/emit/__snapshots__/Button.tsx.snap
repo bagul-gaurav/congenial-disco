@@ -19,7 +19,14 @@ interface Props {
 export default function PrimaryButton(props: Props) {
     const { label = "Click me", tone = "primary", disabled = false, onTap, style } = props
 
-    const rootStyle: React.CSSProperties = {
+    const rootGhost: React.CSSProperties = {
+        backgroundColor: "#ffffff",
+        border: "1px solid #3b5bfd",
+    }
+    const rootDisabled: React.CSSProperties = {
+        opacity: 0.4,
+    }
+    const rootBase: React.CSSProperties = {
         width: "fit-content",
         height: "fit-content",
         padding: "10px 18px 10px 18px",
@@ -31,17 +38,15 @@ export default function PrimaryButton(props: Props) {
         backgroundColor: "#3b5bfd",
         borderRadius: 8,
     }
-    const rootGhost: React.CSSProperties = {
-        backgroundColor: "#ffffff",
-        border: "1px solid #3b5bfd",
-    }
-    const rootDisabled: React.CSSProperties = {
-        opacity: 0.4,
+    const rootStyle: React.CSSProperties = {
+        ...rootBase,
+        ...(tone === "ghost" ? rootGhost : null),
+        ...(disabled ? rootDisabled : null),
     }
     const rootMotion = {
         rest: {
-            backgroundColor: "#3b5bfd",
-            scale: 1,
+            backgroundColor: rootStyle.backgroundColor ?? "#3b5bfd",
+            scale: rootStyle.scale ?? 1,
         },
         hover: {
             backgroundColor: "#2f4ad0",
@@ -50,7 +55,10 @@ export default function PrimaryButton(props: Props) {
             scale: 0.97,
         },
     }
-    const labelStyle: React.CSSProperties = {
+    const labelGhost: React.CSSProperties = {
+        color: "#3b5bfd",
+    }
+    const labelBase: React.CSSProperties = {
         width: "fit-content",
         flexShrink: 0,
         height: "fit-content",
@@ -64,8 +72,9 @@ export default function PrimaryButton(props: Props) {
         margin: 0,
         display: "block",
     }
-    const labelGhost: React.CSSProperties = {
-        color: "#3b5bfd",
+    const labelStyle: React.CSSProperties = {
+        ...labelBase,
+        ...(tone === "ghost" ? labelGhost : null),
     }
     const arrowStyle: React.CSSProperties = {
         width: 12,
@@ -82,7 +91,7 @@ export default function PrimaryButton(props: Props) {
     }
     const arrowMotion = {
         rest: {
-            display: "none",
+            display: arrowStyle.display ?? "none",
         },
         hover: {
             display: "block",
@@ -93,8 +102,6 @@ export default function PrimaryButton(props: Props) {
         <motion.div
             style={{
                 ...rootStyle,
-                ...(tone === "ghost" ? rootGhost : null),
-                ...(disabled ? rootDisabled : null),
                 ...style,
             }}
             variants={rootMotion}
@@ -104,10 +111,7 @@ export default function PrimaryButton(props: Props) {
             onTap={disabled ? undefined : onTap}
         >
             <p
-                style={{
-                    ...labelStyle,
-                    ...(tone === "ghost" ? labelGhost : null),
-                }}
+                style={labelStyle}
             >
                 {label}
             </p>

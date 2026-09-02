@@ -76,13 +76,26 @@ function key(name: string): string {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name)
 }
 
-function renderValue(value: CSSObject[string], propName: (id: PropId) => string): string {
+/** A raw expression to emit verbatim, rather than a literal value. */
+interface ExprRef {
+  __expr: string
+}
+
+function isExprRef(value: unknown): value is ExprRef {
+  return typeof value === "object" && value !== null && "__expr" in value
+}
+
+type EmitValue = CSSObject[string] | ExprRef
+type EmitObject = Record<string, EmitValue>
+
+function renderValue(value: EmitValue, propName: (id: PropId) => string): string {
+  if (isExprRef(value)) return value.__expr
   if (isBindRef(value)) return propName(value.__bind) // a prop reference, not a literal
   return typeof value === "number" ? String(value) : JSON.stringify(value)
 }
 
 function serializeStyle(
-  style: CSSObject,
+  style: EmitObject,
   propName: (id: PropId) => string,
   depth: number,
 ): string {
@@ -98,7 +111,7 @@ function serializeStyle(
 
 /** `{ rest: {...}, hover: {...} }` — a framer-motion variants map. */
 function serializeVariants(
-  entries: Array<[string, CSSObject]>,
+  entries: Array<[string, EmitObject]>,
   propName: (id: PropId) => string,
   depth: number,
 ): string {
@@ -116,7 +129,10 @@ function serializeVariants(
 interface Names {
   component: string
   prop: (id: PropId) => string
+  /** Const holding the composed style the element actually uses. */
   styleConst: (nodeId: NodeId) => string
+  /** Const holding the unconditional base style, when a composed one exists. */
+  baseConst: (nodeId: NodeId) => string
   /** Const holding a conditional (prop-driven or disabled) variant's delta. */
   variantConst: (nodeId: NodeId, variantId: string) => string
   /** Const holding a node's framer-motion variants map. */
@@ -157,12 +173,14 @@ function buildNames(doc: ComponentDoc, tree: ResolvedTree): Names {
   }
 
   const styleNames = new Map<NodeId, string>()
+  const baseNames = new Map<NodeId, string>()
   const motionNames = new Map<NodeId, string>()
   const variantNames = new Map<string, string>()
 
   for (const nodeId of Object.keys(tree.byId)) {
     const stem = stems.get(nodeId)!
     styleNames.set(nodeId, claim(`${stem}Style`))
+    baseNames.set(nodeId, claim(`${stem}Base`))
 
     for (const variant of doc.variants) {
       if (!(variant.id in tree.byId[nodeId].variantStyles)) continue
@@ -179,6 +197,7 @@ function buildNames(doc: ComponentDoc, tree: ResolvedTree): Names {
     component,
     prop: (id) => propNames.get(id) ?? "undefined",
     styleConst: (nodeId) => styleNames.get(nodeId) ?? "layerStyle",
+    baseConst: (nodeId) => baseNames.get(nodeId) ?? "layerBase",
     variantConst: (nodeId, variantId) =>
       variantNames.get(`${nodeId}:${variantId}`) ?? `${stems.get(nodeId) ?? "layer"}Variant`,
     motionConst: (nodeId) => motionNames.get(nodeId) ?? `${stems.get(nodeId) ?? "layer"}Motion`,
@@ -282,26 +301,44 @@ function stateDeltas(
 }
 
 /**
- * The values a node returns to when no state is active. framer-motion needs an
- * explicit resting entry for every property a state touches, or the layer stays
- * stuck on the last animated value after the pointer leaves.
+ * The values a node returns to when no state is active.
+ *
+ * framer-motion needs an explicit resting entry for every property a state
+ * touches, or the layer stays stuck on the last animated value after the
+ * pointer leaves. Crucially the entries read from the node's *composed* style
+ * const — base plus whatever prop-driven and disabled deltas apply — rather
+ * than from the base alone. Reading the base would make a ghost button animate
+ * back to the primary fill on pointer-out, because the resting entry would name
+ * a colour the component is not currently wearing.
  */
-function restStyle(base: CSSObject, deltas: Map<PointerTrigger, CSSObject>, node: Node): CSSObject {
+function restStyle(
+  styleConst: string,
+  base: CSSObject,
+  deltas: Map<PointerTrigger, CSSObject>,
+  node: Node,
+): EmitObject {
   const touched = new Set<string>()
   for (const delta of deltas.values()) for (const k of Object.keys(delta)) touched.add(k)
 
-  const rest: CSSObject = {}
+  const fallback = (k: string): string | number | undefined => {
+    const value = base[k]
+    if (value !== undefined && !isBindRef(value)) return value
+    if (k === "scale" || k === "opacity") return 1
+    // The base omits `display` for nothing, but a bound fill has no literal to
+    // fall back to, so leave those to the composed value alone.
+    if (k === "display") return node.type === "frame" && node.layout.mode === "stack" ? "flex" : "block"
+    return undefined
+  }
+
+  const rest: EmitObject = {}
   for (const k of touched) {
-    if (base[k] !== undefined) {
-      rest[k] = base[k]
-    } else if (k === "scale") {
-      rest[k] = 1
-    } else if (k === "display") {
-      // The base style omits `display` for a visible non-flex layer, but the
-      // resting entry must still name one to animate back to.
-      rest[k] = node.type === "frame" && node.layout.mode === "stack" ? "flex" : "block"
-    } else if (k === "opacity") {
-      rest[k] = 1
+    const literal = fallback(k)
+    const reference = `${styleConst}.${key(k)}`
+    rest[k] = {
+      __expr:
+        literal === undefined
+          ? reference
+          : `${reference} ?? ${typeof literal === "number" ? literal : JSON.stringify(literal)}`,
     }
   }
   return rest
@@ -321,32 +358,15 @@ function elementFor(node: Node, motion: boolean): string {
 }
 
 /**
- * The `style={...}` expression for a node: its base style, followed by a
- * conditional spread for every variant that is not pointer-driven.
+ * The `style={...}` attribute value. The composed style already folds in every
+ * conditional variant, so the root only has to add Framer's own `style` prop,
+ * which carries the size the component was given on the canvas.
  */
-function styleExpression(
-  ctx: EmitContext,
-  resolved: ResolvedNode,
-  isRoot: boolean,
-  depth: number,
-): string {
-  const nodeId = resolved.node.id
-  const spreads: string[] = [`...${ctx.names.styleConst(nodeId)}`]
+function styleExpression(ctx: EmitContext, nodeId: NodeId, isRoot: boolean, depth: number): string {
+  const composed = ctx.names.styleConst(nodeId)
+  if (!isRoot) return `{${composed}}`
 
-  for (const variant of variantsAffecting(ctx.tree, nodeId)) {
-    const test = conditionFor(ctx, variant)
-    if (test === null) continue
-    spreads.push(`...(${test} ? ${ctx.names.variantConst(nodeId, variant.id)} : null)`)
-  }
-
-  // Framer passes canvas sizing through `style`; the root must respect it or it
-  // cannot be resized on the canvas.
-  if (isRoot) spreads.push("...style")
-
-  if (spreads.length === 1) return `{${ctx.names.styleConst(nodeId)}}`
-
-  const body = spreads.map((s) => `${pad(depth + 2)}${s},`).join("\n")
-  return `{{\n${body}\n${pad(depth + 1)}}}`
+  return `{{\n${pad(depth + 2)}...${composed},\n${pad(depth + 2)}...style,\n${pad(depth + 1)}}}`
 }
 
 function contentExpression(ctx: EmitContext, node: Node): string {
@@ -378,23 +398,51 @@ function emitNode(ctx: EmitContext, resolved: ResolvedNode, depth: number, isRoo
   // like `flexDirection: "row"` widens to `string` and fails to satisfy React's
   // union types, which Framer's own editor reports as an error on paste.
   const baseStyle = styleFor(node, { parent })
-  ctx.declarations.push(
-    `${INDENT}const ${ctx.names.styleConst(nodeId)}: React.CSSProperties = ${serializeStyle(baseStyle, ctx.names.prop, 1)}`,
-  )
+  const styleName = ctx.names.styleConst(nodeId)
 
-  // Conditional (prop-driven and disabled) deltas become their own consts.
+  // Conditional (prop-driven and disabled) deltas become their own consts, then
+  // fold into one composed style. Composing here rather than inline in the JSX
+  // means the resting motion variant can read the *current* values.
+  const conditionals: Array<{ test: string; constName: string }> = []
   for (const variant of variantsAffecting(ctx.tree, nodeId)) {
     if (pointerTrigger(ctx, variant)) continue
+    const test = conditionFor(ctx, variant)
+    if (test === null) continue
+
+    const constName = ctx.names.variantConst(nodeId, variant.id)
     const delta = variantStyleFor(node, resolved.variantStyles[variant.id], { parent })
     ctx.declarations.push(
-      `${INDENT}const ${ctx.names.variantConst(nodeId, variant.id)}: React.CSSProperties = ${serializeStyle(delta, ctx.names.prop, 1)}`,
+      `${INDENT}const ${constName}: React.CSSProperties = ${serializeStyle(delta, ctx.names.prop, 1)}`,
+    )
+    conditionals.push({ test, constName })
+  }
+
+  if (conditionals.length === 0) {
+    ctx.declarations.push(
+      `${INDENT}const ${styleName}: React.CSSProperties = ${serializeStyle(baseStyle, ctx.names.prop, 1)}`,
+    )
+  } else {
+    const baseName = ctx.names.baseConst(nodeId)
+    ctx.declarations.push(
+      `${INDENT}const ${baseName}: React.CSSProperties = ${serializeStyle(baseStyle, ctx.names.prop, 1)}`,
+    )
+
+    const spreads = [
+      `...${baseName}`,
+      ...conditionals.map(({ test, constName }) => `...(${test} ? ${constName} : null)`),
+    ]
+    const body = spreads.map((s) => `${pad(2)}${s},`).join("\n")
+    ctx.declarations.push(
+      `${INDENT}const ${styleName}: React.CSSProperties = {\n${body}\n${INDENT}}`,
     )
   }
 
   // Pointer deltas become a framer-motion variants map keyed by label.
   const deltas = stateDeltas(ctx, resolved, parent)
   if (deltas.size > 0) {
-    const entries: Array<[string, CSSObject]> = [[REST_LABEL, restStyle(baseStyle, deltas, node)]]
+    const entries: Array<[string, EmitObject]> = [
+      [REST_LABEL, restStyle(styleName, baseStyle, deltas, node)],
+    ]
     for (const [trigger, delta] of deltas) entries.push([STATE_LABEL[trigger], delta])
 
     ctx.declarations.push(
@@ -405,7 +453,7 @@ function emitNode(ctx: EmitContext, resolved: ResolvedNode, depth: number, isRoo
   const motion = needsMotion(ctx, resolved, isRoot, deltas.size > 0)
   const tag = elementFor(node, motion)
 
-  const attributes: string[] = [`style=${styleExpression(ctx, resolved, isRoot, depth)}`]
+  const attributes: string[] = [`style=${styleExpression(ctx, nodeId, isRoot, depth)}`]
 
   if (deltas.size > 0) attributes.push(`variants={${ctx.names.motionConst(nodeId)}}`)
 
@@ -504,8 +552,9 @@ export function emitComponent(doc: ComponentDoc): EmitResult {
 
   const stateByVariant = new Map<string, StateDef>()
   for (const variant of doc.variants) {
-    if (variant.selector.kind !== "state") continue
-    const state = doc.states.find((s) => s.id === variant.selector.stateId)
+    const { selector } = variant
+    if (selector.kind !== "state") continue
+    const state = doc.states.find((s) => s.id === selector.stateId)
     if (state) stateByVariant.set(variant.id, state)
   }
 
