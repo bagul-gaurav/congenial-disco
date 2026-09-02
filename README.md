@@ -265,11 +265,14 @@ than at each call site.
 and nothing else — no rate limit, no per-user budget. Fine behind a login on a
 laptop; not fine on a public address.
 
-**Two dependency advisories need a major upgrade.** `postcss` inside Next 15
-(fixed in Next 16) and `deepmerge-ts` under the Prisma CLI (fixed in Prisma 7).
-Both are build-time, neither is reachable from a request, and both upgrades are
-breaking — so they are scheduled work rather than a patch bump. `npm audit`
-lists them.
+**Four dependency advisories need a major upgrade.** `postcss` inside Next 15
+(fixed in Next 16) and `deepmerge-ts` under the Prisma CLI (fixed in Prisma 7)
+are both build-time and neither is reachable from a request. `vitest` (fixed
+in vitest 4, critical: arbitrary file read/execution when its UI server is
+listening) and `esbuild` under `vite`/`vitest` (moderate) are dev-tooling
+only — not present in a deployed build. All four upgrades are breaking, so
+they are scheduled work rather than a patch bump. `npm audit` lists them; the
+first two show up with `--omit=dev`, the last two need a full install.
 
 Also absent: vector editing (pen/bezier), component nesting and slots, and
 multiplayer. The flat `nodes` record and the pure ops layer are
