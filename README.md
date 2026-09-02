@@ -248,6 +248,20 @@ Five layers, in increasing order of what they prove:
 If a Chromium is already installed (as in most CI images), point Playwright at
 it with `CHROMIUM_PATH` rather than downloading another.
 
+### Staging against Supabase
+
+`.github/workflows/supabase-staging.yml` runs the full suite — migrate, unit
+tests, browser tests — against a real Supabase Postgres project instead of the
+disposable Docker Postgres `ci.yml` uses. It does not run on every push: one
+shared, persistent database makes concurrent runs unsafe, so it's triggered by
+hand (Actions tab → "Supabase staging" → Run workflow) plus a weekly canary.
+
+Needs a repo secret `SUPABASE_DATABASE_URL` — the connection string from the
+Supabase project's Settings → Database → Connection string → URI — under
+Settings → Secrets and variables → Actions. The e2e global setup reseeds the
+demo component by name before each run, so it's safe to point at a database
+that already has data in it.
+
 ## Not built yet
 
 **Authentication.** There is no login: `DEV_USER_EMAIL` decides whose workspace
