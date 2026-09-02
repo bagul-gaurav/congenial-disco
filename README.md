@@ -39,14 +39,27 @@ the export; it is the same styling logic through a different back end.
 
 ## Getting started
 
+You need Node 20+ and a Postgres database.
+
 ```bash
 npm install
-cp .env.example .env.local          # set DATABASE_URL and OPENROUTER_API_KEY
-npx prisma db push
+cp .env.example .env.local          # set DATABASE_URL (OPENROUTER_API_KEY optional)
+npm run db:push                     # create the tables
+npm run db:seed                     # optional: a demo button to open and export
 npm run dev
 ```
 
-Then open <http://localhost:3000>, create a component, and describe it.
+Then open <http://localhost:3000>. The seed gives you a *Primary Button* with a
+bound label, a `tone` enum, a disabled flag and hover/press states already
+designed — open it and press ⌘/Ctrl+E to see the exported component
+immediately. Or create your own from the same page.
+
+No Postgres handy? Anything speaking the wire protocol works:
+
+```bash
+docker run --name studio-db -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
+# DATABASE_URL="postgresql://postgres:postgres@localhost:5432/postgres"
+```
 
 ### Environment
 
