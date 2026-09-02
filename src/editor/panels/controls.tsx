@@ -70,9 +70,11 @@ export function Select({
 export function ColorInput({
   value,
   onCommit,
+  testId,
 }: {
   value: string
   onCommit: (value: string) => void
+  testId?: string
 }) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -82,7 +84,11 @@ export function ColorInput({
         onChange={(event) => onCommit(event.target.value)}
         className="h-6 w-6 shrink-0 cursor-pointer rounded border border-chrome-border bg-transparent"
       />
-      <TextInput value={value} onChange={(event) => onCommit(event.target.value)} />
+      <TextInput
+        value={value}
+        data-testid={testId}
+        onChange={(event) => onCommit(event.target.value)}
+      />
     </div>
   )
 }

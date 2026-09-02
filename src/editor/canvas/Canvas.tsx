@@ -25,27 +25,35 @@ import { SelectionOverlay, type NodeRect } from "./SelectionOverlay"
 const MIN_ZOOM = 0.1
 const MAX_ZOOM = 8
 
-/** Prop values the canvas previews with: defaults, plus the active variant's. */
+/**
+ * Prop values the canvas previews with: defaults, plus the active variant's.
+ *
+ * Derived with `useMemo` from two stable slices rather than inside the selector.
+ * A selector that builds a fresh object every call looks like a changed
+ * snapshot to zustand's `useSyncExternalStore`, which re-renders forever.
+ */
 function useCanvasValues(): PropValues {
-  return useEditor((state) => {
-    const values = propValues(state.doc)
-    const variant = state.doc.variants.find((v) => v.id === state.activeVariantId)
-    const selector = variant?.selector
+  const doc = useEditor((s) => s.doc)
+  const activeVariantId = useEditor((s) => s.activeVariantId)
+
+  return React.useMemo(() => {
+    const values = propValues(doc)
+    const selector = doc.variants.find((v) => v.id === activeVariantId)?.selector
 
     if (selector?.kind === "prop") {
       // Selecting the "ghost" variant should show you the ghost design.
-      const prop = state.doc.props.find((p) => p.id === selector.propId)
+      const prop = doc.props.find((p) => p.id === selector.propId)
       values[selector.propId] =
         prop?.type === "boolean" ? selector.value === "true" : selector.value
     }
 
-    const disabledState = state.doc.states.find((s) => s.trigger === "disabled")
+    const disabledState = doc.states.find((s) => s.trigger === "disabled")
     if (disabledState?.propId && selector?.kind === "state" && selector.stateId === disabledState.id) {
       values[disabledState.propId] = true
     }
 
     return values
-  })
+  }, [doc, activeVariantId])
 }
 
 export function Canvas() {
@@ -194,6 +202,7 @@ export function Canvas() {
   return (
     <div
       ref={containerRef}
+      data-testid="canvas"
       className="relative h-full w-full overflow-hidden bg-chrome-bg"
       style={{ cursor: panning ? "grabbing" : tool === "select" ? "default" : "crosshair" }}
       onWheel={onWheel}

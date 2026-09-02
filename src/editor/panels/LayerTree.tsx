@@ -56,6 +56,8 @@ export function LayerTree() {
           return (
             <div
               key={node.id}
+              data-testid="layer-row"
+              data-layer-id={node.id}
               className={`group flex items-center gap-2 px-2 py-1 text-xs ${
                 selected ? "bg-chrome-accent/20 text-chrome-text" : "text-chrome-muted hover:bg-white/5"
               }`}

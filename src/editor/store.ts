@@ -10,6 +10,7 @@
  * the base design. That is what makes "edit the base, everything follows" work.
  */
 
+import { useMemo } from "react"
 import { create } from "zustand"
 
 import { createDoc } from "@/model/defaults"
@@ -211,17 +212,25 @@ export function useSelectedNode() {
  * States to show on the canvas: whatever the user pinned, plus the state the
  * active variant is designed for — selecting the hover variant should show you
  * the hover design without a second click.
+ *
+ * Composed with `useMemo` over stable slices. Returning a freshly built array
+ * straight from a selector makes zustand see a new snapshot on every render and
+ * loop forever.
  */
 export function useCanvasStates(): StateTrigger[] {
-  return useEditor((state) => {
-    const forced = [...state.forcedStates]
-    const selector = state.doc.variants.find((v) => v.id === state.activeVariantId)?.selector
+  const doc = useEditor((s) => s.doc)
+  const forcedStates = useEditor((s) => s.forcedStates)
+  const activeVariantId = useEditor((s) => s.activeVariantId)
+
+  return useMemo(() => {
+    const forced = [...forcedStates]
+    const selector = doc.variants.find((v) => v.id === activeVariantId)?.selector
     if (selector?.kind === "state") {
-      const stateDef = state.doc.states.find((s) => s.id === selector.stateId)
+      const stateDef = doc.states.find((s) => s.id === selector.stateId)
       if (stateDef && stateDef.trigger !== "disabled" && !forced.includes(stateDef.trigger)) {
         forced.push(stateDef.trigger)
       }
     }
     return forced
-  })
+  }, [doc, forcedStates, activeVariantId])
 }

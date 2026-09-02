@@ -72,7 +72,7 @@ export function ExportPanel({ onClose }: { onClose: () => void }) {
       </p>
 
       <pre className="flex-1 overflow-auto p-4 text-xs leading-relaxed text-chrome-text">
-        <code>{code}</code>
+        <code data-testid="export-code">{code}</code>
       </pre>
     </div>
   )

@@ -35,6 +35,7 @@ export function VariantBar() {
     <div className="flex items-center gap-1 border-b border-chrome-border bg-chrome-panel px-3 py-2">
       <button
         type="button"
+        data-testid="variant-base"
         onClick={() => setActiveVariant(null)}
         className={`rounded px-2 py-1 text-xs transition ${
           activeVariantId === null
@@ -57,6 +58,7 @@ export function VariantBar() {
         <div key={variant.id} className="group relative">
           <button
             type="button"
+            data-testid="variant-chip"
             title={describe(variant.id)}
             onClick={() => setActiveVariant(variant.id)}
             className={`rounded px-2 py-1 text-xs transition ${

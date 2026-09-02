@@ -264,6 +264,7 @@ function AppearanceSection({ node }: { node: Node }) {
         ) : (
           <ColorInput
             value={fill ?? "#ffffff"}
+            testId="fill-input"
             onCommit={(value) => edit(node.id, { style: { fill: value } })}
           />
         )}
@@ -394,10 +395,14 @@ function BoundValue({
 
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2">
-      <code className="truncate rounded bg-chrome-accent/20 px-2 py-1 text-[11px] text-chrome-text">
+      <code
+        data-testid="bound-prop"
+        className="truncate rounded bg-chrome-accent/20 px-2 py-1 text-[11px] text-chrome-text"
+      >
         {prop?.name ?? "missing prop"}
       </code>
       <Button
+        data-testid="unbind"
         title="Stop reading from this prop"
         onClick={() =>
           apply((doc) =>

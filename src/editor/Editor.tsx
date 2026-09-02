@@ -97,6 +97,7 @@ function Toolbar({ status, onExport }: { status: string; onExport: () => void })
         <button
           key={entry.id}
           type="button"
+          data-testid={`tool-${entry.id}`}
           title={`${entry.label} (${entry.shortcut})`}
           onClick={() => setTool(entry.id)}
           className={`rounded px-2 py-1 text-xs transition ${
@@ -119,7 +120,7 @@ function Toolbar({ status, onExport }: { status: string; onExport: () => void })
       <div className="flex-1" />
 
       <span className="text-xs text-chrome-muted">{status}</span>
-      <Button variant="accent" onClick={onExport}>
+      <Button variant="accent" data-testid="export-open" onClick={onExport}>
         Export to Framer
       </Button>
     </header>
